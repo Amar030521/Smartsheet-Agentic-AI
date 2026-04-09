@@ -160,6 +160,7 @@ export default function App() {
   const { sessions: chatSessions, loadSessions: reloadSessions, loadMessages, renameSession, deleteSession } = useChatSessions(getToken, user);
   const [showAllSessions, setShowAllSessions] = useState(false);
   const [sessionsCollapsed, setSessionsCollapsed] = useState(false);
+  const [workspacesCollapsed, setWorkspacesCollapsed] = useState(false);
   const [editingSessionId, setEditingSessionId] = useState(null);
   const [editingTitle, setEditingTitle] = useState('');
   const [expandedNodes, setExpandedNodes] = useState({});
@@ -409,71 +410,39 @@ export default function App() {
               </div>
             ) : (
               <>
-                {/* WORKSPACES TREE */}
-                {sidebarData?.workspaces?.length > 0 ? (
-                  <div className="sidebar-section">
-                    <div className="sidebar-label">WORKSPACES</div>
-                    {sidebarData.workspaces.map(ws => (
-                      <WorkspaceNode key={ws.id} node={ws} depth={0}
-                        expanded={expandedNodes} setExpanded={setExpandedNodes}
-                        onSend={doSend} loadWorkspaceTree={loadWorkspaceTree} />
-                    ))}
+                {/* WORKSPACES TREE — collapseable */}
+                <div className="sidebar-section">
+                  <div className="sidebar-label"
+                    style={{ display:'flex', justifyContent:'space-between', alignItems:'center', cursor:'pointer', userSelect:'none' }}
+                    onClick={() => setWorkspacesCollapsed(c => !c)}>
+                    <span>WORKSPACES</span>
+                    <span style={{ fontSize:10, opacity:0.6, marginLeft:4 }}>{workspacesCollapsed ? '▶' : '▼'}</span>
                   </div>
-                ) : (
-                  <div className="sidebar-section">
-                    <div className="sidebar-label">WORKSPACES</div>
-                    <div className="sidebar-item" onClick={() => doSend('List all my Smartsheet workspaces')}>
-                      <span className="item-icon">🏢</span>
-                      <span className="item-label">My Workspaces</span>
-                    </div>
-                    <div className="sidebar-item" onClick={() => doSend('Show all sheets I have access to')}>
-                      <span className="item-icon">📋</span>
-                      <span className="item-label">All Sheets</span>
-                    </div>
-                    <div className="sidebar-item" onClick={() => doSend('List all my Smartsheet dashboards')}>
-                      <span className="item-icon">🖥️</span>
-                      <span className="item-label">Dashboards</span>
-                    </div>
-                  </div>
-                )}
+                  {!workspacesCollapsed && (
+                    <>
+                      {sidebarData?.workspaces?.length > 0 ? (
+                        sidebarData.workspaces.map(ws => (
+                          <WorkspaceNode key={ws.id} node={ws} depth={0}
+                            expanded={expandedNodes} setExpanded={setExpandedNodes}
+                            onSend={doSend} loadWorkspaceTree={loadWorkspaceTree} />
+                        ))
+                      ) : (
+                        <>
+                          <div className="sidebar-item" onClick={() => doSend('List all my Smartsheet workspaces')}>
+                            <span className="item-icon">🏢</span>
+                            <span className="item-label">My Workspaces</span>
+                          </div>
+                          <div className="sidebar-item" onClick={() => doSend('Show all sheets I have access to')}>
+                            <span className="item-icon">📋</span>
+                            <span className="item-label">All Sheets</span>
+                          </div>
+                        </>
+                      )}
+                    </>
+                  )}
+                </div>
 
-                {/* RECENT SHEETS */}
-                {sidebarData?.recent_sheets?.length > 0 && (
-                  <>
-                    <div className="sidebar-divider" />
-                    <div className="sidebar-section">
-                      <div className="sidebar-label">RECENT SHEETS</div>
-                      {sidebarData.recent_sheets.slice(0, 6).map(s => (
-                        <div key={s.id} className="sidebar-item"
-                          onClick={() => doSend(`Show me data from sheet "${s.name}" (sheet_id: ${s.id})`)}
-                          title={s.name}>
-                          <span className="item-icon">📋</span>
-                          <span className="item-label">{s.name}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )}
-
-                {/* DASHBOARDS */}
-                {sidebarData?.dashboards?.length > 0 && (
-                  <>
-                    <div className="sidebar-divider" />
-                    <div className="sidebar-section">
-                      <div className="sidebar-label">DASHBOARDS</div>
-                      {sidebarData.dashboards.slice(0, 5).map(d => (
-                        <div key={d.id} className="sidebar-item"
-                          onClick={() => doSend(`Show me the dashboard "${d.name}" (sight_id: ${d.id})`)}
-                          title={d.name}>
-                          <span className="item-icon">🖥️</span>
-                          <span className="item-label">{d.name}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )}
-
-                {/* DYNAMIC SECTIONS (recent sheets, dashboards, actions from hook) */}
+                {/* DYNAMIC SECTIONS (actions from hook — recent sheets/dashboards removed, shown in sidebar sections) */}
                 {/* CHAT HISTORY */}
                 {chatSessions.length > 0 && (
                   <>

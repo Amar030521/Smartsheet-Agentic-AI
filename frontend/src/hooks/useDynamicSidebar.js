@@ -35,33 +35,8 @@ export function useDynamicSidebar(sessionId, getToken, user) {
       if (data && Array.isArray(data.workspaces)) {
         setTreeData(data);
 
-        // Build sections: recent sheets + dashboards + actions
-        const built = [];
-
-        if (data.recent_sheets?.length > 0) {
-          built.push({
-            section: 'RECENT SHEETS',
-            items: data.recent_sheets.slice(0, 6).map(s => ({
-              icon: '📋', label: s.name,
-              prompt: `Show me the data from sheet "${s.name}" (sheet_id: ${s.id})`,
-              id: s.id, type: 'sheet'
-            }))
-          });
-        }
-
-        if (data.dashboards?.length > 0) {
-          built.push({
-            section: 'DASHBOARDS',
-            items: data.dashboards.slice(0, 5).map(d => ({
-              icon: '🖥️', label: d.name,
-              prompt: `Show me the dashboard "${d.name}" (sight_id: ${d.id})`,
-              id: d.id, type: 'dashboard'
-            }))
-          });
-        }
-
-        built.push(ACTIONS_SECTION);
-        setSections(built);
+        // Only show ACTIONS section — workspace tree handles all navigation
+        setSections([ACTIONS_SECTION]);
       } else {
         // API returned unexpected shape — use fallback with actions only
         console.warn('[Sidebar] unexpected response shape:', data);
