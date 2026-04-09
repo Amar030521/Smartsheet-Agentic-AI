@@ -6,6 +6,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { sendMessage, clearSession, getHealth } from './utils/api';
 import { useVoiceInput } from './hooks/useVoiceInput';
 import { useDynamicSidebar } from './hooks/useDynamicSidebar';
+import { useChatSessions } from './hooks/useChatSessions';
 import MessageBubble from './components/MessageBubble';
 import ChartCard from './components/ChartCard';
 import DashboardCard from './components/DashboardCard';
@@ -156,6 +157,11 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [isListening, setIsListening] = useState(false);
   const { sections: sidebarSections, treeData: sidebarData, loading: sidebarLoading, reload: reloadSidebar, loadWorkspaceTree } = useDynamicSidebar(sessionId, getToken, user);
+  const { sessions: chatSessions, loadSessions: reloadSessions, loadMessages, renameSession, deleteSession } = useChatSessions(getToken, user);
+  const [showAllSessions, setShowAllSessions] = useState(false);
+  const [sessionsCollapsed, setSessionsCollapsed] = useState(false);
+  const [editingSessionId, setEditingSessionId] = useState(null);
+  const [editingTitle, setEditingTitle] = useState('');
   const [expandedNodes, setExpandedNodes] = useState({});
   const [sidebarWidth, setSidebarWidth] = useState(200);
   const isResizing = React.useRef(false);
@@ -268,6 +274,8 @@ export default function App() {
     } finally {
       setIsLoading(false);
       inputRef.current?.focus();
+      // Refresh session list to show/update current session
+      reloadSessions();
     }
   }, [input, isLoading, sessionId]);
 
@@ -291,6 +299,24 @@ export default function App() {
       tool_calls: [], chart_data: null, needs_confirmation: false
     }]);
   };
+
+  const loadHistorySession = useCallback(async (session) => {
+    // Load a past session's messages into the chat
+    const msgs = await loadMessages(session.id);
+    if (!msgs.length) return;
+    const formatted = msgs.map(m => ({
+      id: m.id || uuidv4(),
+      role: m.role,
+      content: m.content,
+      tool_calls: m.tool_calls || [],
+      chart_data: m.chart_data || null,
+      dashboard_data: m.dashboard_data || null,
+      infographics: m.infographics || [],
+      followups: m.followups || [],
+      needs_confirmation: false,
+    }));
+    setMessages(formatted);
+  }, [loadMessages]);
 
   const handleNewSession = async () => {
     await clearSession(sessionId).catch(() => {});
@@ -448,6 +474,62 @@ export default function App() {
                 )}
 
                 {/* DYNAMIC SECTIONS (recent sheets, dashboards, actions from hook) */}
+                {/* CHAT HISTORY */}
+                {chatSessions.length > 0 && (
+                  <>
+                    <div className="sidebar-divider" />
+                    <div className="sidebar-section">
+                      <div className="sidebar-label" style={{ display:'flex', justifyContent:'space-between', alignItems:'center', cursor:'pointer' }}
+                        onClick={() => setSessionsCollapsed(c => !c)}>
+                        <span>CHAT HISTORY</span>
+                        <span style={{ fontSize:10, opacity:0.6 }}>{sessionsCollapsed ? '▶' : '▼'}</span>
+                      </div>
+                      {!sessionsCollapsed && (
+                        <>
+                          {(showAllSessions ? chatSessions : chatSessions.slice(0, 10)).map(s => (
+                            <div key={s.id} className="sidebar-item" style={{ paddingRight:4, position:'relative' }}
+                              title={s.title}>
+                              {editingSessionId === s.id ? (
+                                <input
+                                  autoFocus
+                                  value={editingTitle}
+                                  onChange={e => setEditingTitle(e.target.value)}
+                                  onBlur={() => { renameSession(s.id, editingTitle); setEditingSessionId(null); }}
+                                  onKeyDown={e => { if(e.key==='Enter'){renameSession(s.id,editingTitle);setEditingSessionId(null);} if(e.key==='Escape')setEditingSessionId(null); }}
+                                  onClick={e => e.stopPropagation()}
+                                  style={{ width:'100%', fontSize:12, border:'1px solid #f0d5be', borderRadius:4, padding:'2px 6px', background:'#fff', outline:'none' }}
+                                />
+                              ) : (
+                                <>
+                                  <span className="item-icon" style={{fontSize:11}}>💬</span>
+                                  <span className="item-label" style={{fontSize:12, flex:1}}
+                                    onClick={() => loadHistorySession(s)}>
+                                    {s.title || 'Chat'}
+                                  </span>
+                                  <div style={{display:'flex', gap:2, flexShrink:0}}>
+                                    <span style={{fontSize:10, cursor:'pointer', opacity:0.5, padding:'0 3px'}}
+                                      title="Rename"
+                                      onClick={e => {e.stopPropagation();setEditingSessionId(s.id);setEditingTitle(s.title||'');}}>✏️</span>
+                                    <span style={{fontSize:10, cursor:'pointer', opacity:0.5, padding:'0 3px'}}
+                                      title="Delete"
+                                      onClick={e => {e.stopPropagation();if(window.confirm('Delete this chat?'))deleteSession(s.id);}}>🗑️</span>
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          ))}
+                          {chatSessions.length > 10 && (
+                            <div className="sidebar-item" onClick={() => setShowAllSessions(s => !s)}
+                              style={{ opacity:0.6, fontSize:12, justifyContent:'center' }}>
+                              {showAllSessions ? '▲ Show less' : `▼ Show all ${chatSessions.length} chats`}
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </>
+                )}
+
                 {sidebarSections.map((section, si) => (
                   <div key={si}>
                     <div className="sidebar-divider" />

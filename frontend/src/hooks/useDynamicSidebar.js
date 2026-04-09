@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 
 const BACKEND_URL = process.env.REACT_APP_API_URL || '';
 
@@ -6,6 +6,9 @@ export function useDynamicSidebar(sessionId, getToken, user) {
   const [sections, setSections] = useState([]);
   const [treeData, setTreeData] = useState(null);
   const [loading, setLoading] = useState(true);
+  // Keep getToken in a ref so loadSidebar always uses the CURRENT token
+  const getTokenRef = React.useRef(getToken);
+  React.useEffect(() => { getTokenRef.current = getToken; }, [getToken]);
 
   const ACTIONS_SECTION = {
     section: 'ACTIONS',
@@ -20,7 +23,8 @@ export function useDynamicSidebar(sessionId, getToken, user) {
   const loadSidebar = useCallback(async () => {
     try {
       setLoading(true);
-      const token = getToken ? getToken() : null;
+      // Always use current token from ref — prevents stale closure
+      const token = getTokenRef.current ? getTokenRef.current() : null;
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
       const res = await fetch(`${BACKEND_URL}/api/v1/sidebar`, { headers });
       const data = await res.json();

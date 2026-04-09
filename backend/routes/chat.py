@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Request, Header
 from typing import Optional
 from utils.models import ChatRequest, ChatResponse, ToolCallInfo, ChartData
 from utils.auth import decode_token, extract_token_from_header
+from utils import chat_store
 from utils.session_store import get_session_store
 from utils.agent import run_agent
 from utils.logger import get_logger
@@ -39,19 +40,45 @@ async def chat(req: ChatRequest, request: Request, authorization: Optional[str] 
     )
 
     try:
-        # Extract per-user Smartsheet token from JWT if auth enabled
+        # Extract per-user info from JWT
         smartsheet_token = None
+        user_id = None
         if authorization:
             token = extract_token_from_header(authorization)
             if token:
                 payload = decode_token(token)
                 if payload:
                     smartsheet_token = payload.get("smartsheet_token")
+                    user_id = payload.get("user_id")
 
         result = await run_agent(messages, req.message, smartsheet_token=smartsheet_token)
 
-        # Persist updated conversation history
+        # Persist updated conversation history (in-memory fallback)
         await store.set(session_id, result["messages"])
+
+        # Persist to Supabase if user is authenticated
+        if user_id:
+            try:
+                # Create session if first message
+                if len(messages) == 0:
+                    title = req.message[:60] + ("..." if len(req.message) > 60 else "")
+                    chat_store.create_session_if_not_exists(session_id, user_id, title)
+                else:
+                    chat_store.touch_session(session_id)
+                # Save user message
+                chat_store.save_message(session_id, "user", req.message)
+                # Save AI response
+                chat_store.save_message(
+                    session_id, "assistant",
+                    result["response"],
+                    tool_calls=result.get("tool_calls", []),
+                    dashboard_data=result.get("dashboard_data"),
+                    infographics=result.get("infographics", []),
+                    followups=result.get("followups", []),
+                    chart_data=result.get("chart_data"),
+                )
+            except Exception as _e:
+                logger.warning("Failed to persist to Supabase", error=str(_e))
 
         processing_ms = int((time.time() - start_time) * 1000)
         logger.info(
@@ -162,6 +189,53 @@ async def get_sidebar_data(authorization: Optional[str] = Header(None)):
         return {"workspaces": workspaces, "recent_sheets": recent_sheets, "dashboards": dashboards}
     except Exception as e:
         return {"workspaces": [], "recent_sheets": [], "dashboards": [], "error": str(e)}
+
+
+# ── CHAT HISTORY ROUTES ──────────────────────────────────────────
+
+@router.get("/sessions")
+async def get_sessions(authorization: Optional[str] = Header(None)):
+    """Get all chat sessions for the logged-in user."""
+    if not authorization:
+        return {"sessions": []}
+    token = extract_token_from_header(authorization)
+    if not token:
+        return {"sessions": []}
+    payload = decode_token(token)
+    if not payload:
+        return {"sessions": []}
+    sessions = chat_store.get_user_sessions(payload["user_id"])
+    return {"sessions": sessions}
+
+
+@router.get("/sessions/{session_id}/messages")
+async def get_session_messages(session_id: str, authorization: Optional[str] = Header(None)):
+    """Load all messages for a specific session."""
+    messages = chat_store.get_session_messages(session_id)
+    return {"messages": messages, "session_id": session_id}
+
+
+@router.patch("/sessions/{session_id}/title")
+async def rename_session(session_id: str, body: dict, authorization: Optional[str] = Header(None)):
+    """Rename a chat session."""
+    title = body.get("title", "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Title required")
+    chat_store.update_session_title(session_id, title[:80])
+    return {"message": "Renamed"}
+
+
+@router.delete("/sessions/{session_id}")
+async def delete_session(session_id: str, authorization: Optional[str] = Header(None)):
+    """Delete a chat session and all its messages."""
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    token = extract_token_from_header(authorization)
+    payload = decode_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    chat_store.delete_session(session_id, payload["user_id"])
+    return {"message": "Deleted"}
 
 
 @router.get("/sidebar/workspace/{workspace_id}")
