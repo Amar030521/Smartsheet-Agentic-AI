@@ -7,15 +7,11 @@ pydantic>=2.8.0
 pydantic-settings>=2.3.0
 httpx>=0.27.0
 python-multipart>=0.0.9
-redis>=5.0.4
 aioredis>=2.0.1
 apscheduler>=3.10.4
-python-jose[cryptography]>=3.3.0
-passlib[bcrypt]>=1.7.4
 structlog>=24.2.0
 mcp>=1.0.0
 websockets>=12.0
-# Auth dependencies
 PyJWT>=2.8.0
 bcrypt>=4.0.0
 supabase>=2.4.0
