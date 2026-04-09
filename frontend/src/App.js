@@ -141,7 +141,6 @@ function WorkspaceNode({ node, depth, expanded, setExpanded, onSend, loadWorkspa
         </div>
       )}
     </div>
-    {showAdmin && <AdminPanel token={getToken()} onClose={() => setShowAdmin(false)} />}
   );
 }
 
