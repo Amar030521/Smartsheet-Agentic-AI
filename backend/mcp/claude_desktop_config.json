@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "smartsheet": {
+      "command": "python",
+      "args": ["C:/path/to/piramal-agent/backend/mcp/smartsheet_mcp_server.py"],
+      "env": {
+        "SMARTSHEET_API_TOKEN": "your_smartsheet_token_here",
+        "ANTHROPIC_API_KEY": "your_anthropic_key_here"
+      }
+    }
+  }
+}

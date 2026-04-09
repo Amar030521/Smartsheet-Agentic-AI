@@ -1,0 +1,22 @@
+# API Keys - NEVER commit these
+.env
+*.env
+.env.*
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Node
+node_modules/
+frontend/build/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

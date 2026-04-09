@@ -1,0 +1,17 @@
+{
+  "python.analysis.extraPaths": [
+    "backend",
+    "backend/mcp",
+    "backend/utils",
+    "backend/routes"
+  ],
+  "python.analysis.typeCheckingMode": "off",
+  "python.analysis.diagnosticMode": "workspace",
+  "python.defaultInterpreterPath": "python",
+  "python.analysis.ignore": [
+    "**/node_modules/**",
+    "**/__pycache__/**"
+  ],
+  "python.analysis.autoSearchPaths": true,
+  "python.analysis.useLibraryCodeForTypes": true
+}

@@ -1,0 +1,16 @@
+{
+  "include": [
+    "backend"
+  ],
+  "extraPaths": [
+    "backend",
+    "backend/mcp",
+    "backend/utils",
+    "backend/routes"
+  ],
+  "pythonVersion": "3.11",
+  "pythonPlatform": "Windows",
+  "reportMissingImports": false,
+  "reportMissingModuleSource": false,
+  "typeCheckingMode": "off"
+}

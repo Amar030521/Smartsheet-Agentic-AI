@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: smartsheet-ai-agent-backend
+    runtime: python
+    region: singapore
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: SMARTSHEET_API_TOKEN
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: APP_ENV
+        value: production
+      - key: PYTHON_VERSION
+        value: 3.11.0
