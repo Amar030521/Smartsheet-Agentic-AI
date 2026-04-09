@@ -316,6 +316,7 @@ export default function App() {
   }[healthStatus] || 'Unknown';
 
   return (
+    <>
     <div className="app">
       {/* HEADER */}
       <header className="header">
@@ -643,5 +644,6 @@ export default function App() {
       )}
     </div>
     {showAdmin && <AdminPanel token={getToken()} onClose={() => setShowAdmin(false)} />}
+    </>
   );
 }
