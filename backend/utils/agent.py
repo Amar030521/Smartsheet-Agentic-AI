@@ -2,6 +2,7 @@
 Agent Orchestration Layer - with rate limit retry handling
 """
 import json
+import re
 import sys
 import os
 import time
@@ -191,9 +192,16 @@ TOOL RULES
 4. Delete / rollout → CONFIRM_REQUIRED
 5. Dashboards → get_sheet_summary (not get_sheet)
 
+AUTOMATION API LIMITATION:
+- Smartsheet API CANNOT create new automation rules — this is an official, permanent API limitation
+- create_automation tool will always return success=False with the config to create manually
+- When this happens: respond with ONE clean block showing the config, NOT a long tutorial
+  Example: "⚠️ Smartsheet API doesn't support creating automations — here's the config to set up manually (Automation → Create Workflow):" then show the config_to_create as a simple list
+- What CAN be done via API: list_automations, update_automation (message/recipients/enable), delete_automation
+
 DISPLAY RULES — clean output only:
 - NEVER display sheet IDs, row IDs, workspace IDs, or any numeric Smartsheet IDs
-- NEVER display raw email addresses — use role name instead: "PM", "Project Lead", "Operations Team Lead"
+- NEVER display raw email addresses — use role name instead: "PM", "Project Lead", "VP"
 - Use names only: "Budget Tracking", "BP Folder", "Professional Certificate Workspace"
 - IDs and emails are for internal tool use only — invisible to the user
 
@@ -333,26 +341,25 @@ When user says "today", "tomorrow", "yesterday", "this week", "next week" — us
         messages = trimmed[start:]
 
     # Truncate large tool results in history to save tokens
+    _DATA_TOOLS = {"get_sheet_summary","filter_rows","aggregate_column",
+                   "get_project_status_summary","get_sheet","get_sheet_by_name",
+                   "get_sheet_with_links","find_contact_in_sheet"}
+
     for msg in messages:
         if msg.get("role") == "user" and isinstance(msg.get("content"), list):
             for block in msg["content"]:
                 if isinstance(block, dict) and block.get("type") == "tool_result":
                     cs = block.get("content", "")
-                    # Smart truncation — data tools get 4000 chars, nav tools 1500
-                _DATA_TOOLS = {"get_sheet_summary","filter_rows","aggregate_column",
-                               "get_project_status_summary","get_sheet","get_sheet_by_name",
-                               "get_sheet_with_links","find_contact_in_sheet"}
-                # Resolve tool name from tool_use_id via the id map built during dispatch
-                _tid = block.get("tool_use_id","") if isinstance(block, dict) else ""
-                # Also check messages for tool_use blocks with matching id
-                _tname = ""
-                for _msg in messages:
-                    if isinstance(_msg.get("content"), list):
-                        for _b in _msg["content"]:
-                            if isinstance(_b, dict) and _b.get("type") == "tool_use" and _b.get("id") == _tid:
-                                _tname = _b.get("name","")
-                _trunc_limit = 4000 if _tname in _DATA_TOOLS else 1500
-                if isinstance(cs, str) and len(cs) > _trunc_limit:
+                    # Resolve tool name from tool_use_id
+                    _tid = block.get("tool_use_id", "")
+                    _tname = ""
+                    for _msg in messages:
+                        if isinstance(_msg.get("content"), list):
+                            for _b in _msg["content"]:
+                                if isinstance(_b, dict) and _b.get("type") == "tool_use" and _b.get("id") == _tid:
+                                    _tname = _b.get("name", "")
+                    _trunc_limit = 4000 if _tname in _DATA_TOOLS else 1500
+                    if isinstance(cs, str) and len(cs) > _trunc_limit:
                         block["content"] = cs[:_trunc_limit] + "...[truncated for token efficiency]"
 
     tool_calls_made = []
@@ -504,24 +511,23 @@ When user says "today", "tomorrow", "yesterday", "this week", "next week" — us
                 pass
 
     # Scrub raw IDs and emails from response text — never show to user
-    import re as _re
     # Remove standalone large integers (Smartsheet IDs are 10-19 digits)
-    final_text = _re.sub(r'\b\d{10,}\b', '[ID]', final_text)
+    final_text = re.sub(r'\b\d{10,}\b', '[ID]', final_text)
     # Clean up "id: [ID]", "Sheet ID: [ID]" patterns  
-    final_text = _re.sub(r'\(?\s*(?:sheet[_\s]?id|workspace[_\s]?id|folder[_\s]?id|row[_\s]?id|id)\s*[:\-]?\s*\[ID\]\s*\)?', '', final_text, flags=_re.IGNORECASE)
+    final_text = re.sub(r'\(?\s*(?:sheet[_\s]?id|workspace[_\s]?id|folder[_\s]?id|row[_\s]?id|id)\s*[:\-]?\s*\[ID\]\s*\)?', '', final_text, flags=re.IGNORECASE)
     # Remove lines that are only "[ID]"
-    final_text = _re.sub(r'^\s*\[ID\]\s*$', '', final_text, flags=_re.MULTILINE)
+    final_text = re.sub(r'^\s*\[ID\]\s*$', '', final_text, flags=re.MULTILINE)
     # Scrub email addresses — remove them cleanly
     # "assigned to email" → "assigned to PM", "Owner: email" → "Owner: PM"
-    final_text = _re.sub(r'(?<=assigned to )\s*[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}', 'PM', final_text)
-    final_text = _re.sub(r'(?<=Owner:\s)[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}', 'PM', final_text)
-    final_text = _re.sub(r'(?<=PM\s)[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}', '', final_text)
+    final_text = re.sub(r'(?<=assigned to )\s*[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}', 'PM', final_text)
+    final_text = re.sub(r'(?<=Owner:\s)[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}', 'PM', final_text)
+    final_text = re.sub(r'(?<=PM\s)[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}', '', final_text)
     # Remove any remaining standalone emails
-    final_text = _re.sub(r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}', '[contact]', final_text)
+    final_text = re.sub(r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}', '[contact]', final_text)
     # Clean up orphaned "()"
-    final_text = _re.sub(r'\(\s*\)', '', final_text)
+    final_text = re.sub(r'\(\s*\)', '', final_text)
     # Collapse multiple blank lines
-    final_text = _re.sub(r'\n{3,}', '\n\n', final_text).strip()
+    final_text = re.sub(r'\n{3,}', '\n\n', final_text).strip()
 
         # Parse INFOGRAPHIC:: blocks — brace-counting for reliable nested JSON
     infographics = []
@@ -553,8 +559,7 @@ When user says "today", "tomorrow", "yesterday", "this week", "next week" — us
     for _start, _end in reversed(_ig_positions):
         final_text = (final_text[:_start] + final_text[_end:]).strip()
     # Clean up any leftover comma-fragments like ",{...}" from failed partial parses
-    import re as _ig_re
-    final_text = _ig_re.sub(r'^,\s*\{[^}]*\}', '', final_text, flags=_ig_re.MULTILINE).strip()
+    final_text = re.sub(r'^,\s*\{[^}]*\}', '', final_text, flags=re.MULTILINE).strip()
 
     # Parse FORM:: block — inline form for user input
     input_form = None

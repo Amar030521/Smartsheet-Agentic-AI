@@ -67,13 +67,30 @@ export default function MessageBubble({ role, content }) {
             </ul>
           ),
 
-          li: ({ children, ordered }) => {
+          li: ({ children, ordered, index }) => {
             const text = childText(children);
             const isCrit = /🔴|critical|immediately|unauthorized|0\s*%\s*(progress|complete)|abandoned|bypass|ghost|#INVALID|#NO MATCH/i.test(text);
             const isWarn = /⚠️|overdue|missing|invalid|inconsistent|risk|stuck|no (?:pm|owner|director)/i.test(text);
             const isGood = /✅|on.?track|complete|early|ahead|only.*phase.*(done|complete)/i.test(text);
-            const borderColor = isCrit ? '#ef4444' : isWarn ? '#f59e0b' : isGood ? '#10b981' : '#e8c4a0';
+            const borderColor = isCrit ? '#ef4444' : isWarn ? '#f59e0b' : isGood ? '#10b981' : '#d4651a';
             const bg = isCrit ? '#fef2f2' : isWarn ? '#fffbeb' : isGood ? '#f0fdf4' : '#fdf6f0';
+            if (ordered) {
+              return (
+                <li style={{
+                  padding:'8px 14px 8px 44px', position:'relative',
+                  background:'#fdf6f0', borderRadius:8, borderLeft:'3px solid #d4651a',
+                  fontSize:13.5, lineHeight:1.65, color:'#1a1a1a',
+                  counterIncrement:'ol-counter',
+                }}>
+                  <span style={{
+                    position:'absolute', left:8, top:8, width:22, height:22,
+                    background:'#d4651a', color:'#fff', fontSize:11, fontWeight:700,
+                    borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center',
+                  }}>{typeof index === 'number' ? index + 1 : ''}</span>
+                  {children}
+                </li>
+              );
+            }
             const dot = isCrit ? '🔴' : isWarn ? '⚠️' : isGood ? '✅' : '•';
             return (
               <li style={{
@@ -88,7 +105,7 @@ export default function MessageBubble({ role, content }) {
           },
 
           ol: ({ children }) => (
-            <ol style={{ paddingLeft:0, margin:'0 0 14px 0', listStyle:'none', display:'flex', flexDirection:'column', gap:6, counterReset:'action-item' }}>
+            <ol style={{ paddingLeft:0, margin:'0 0 14px 0', listStyle:'none', display:'flex', flexDirection:'column', gap:6, counterReset:'ol-counter' }}>
               {children}
             </ol>
           ),

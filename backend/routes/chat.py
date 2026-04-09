@@ -112,8 +112,6 @@ async def get_sidebar_data():
     Fast sidebar load: workspaces list + recent sheets + dashboards.
     Workspace folders are loaded lazily via /sidebar/workspace/{id} when user expands.
     """
-    import sys, os
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'mcp'))
     from utils.smartsheet_client import get_client as get_smartsheet_client
     try:
         client = get_smartsheet_client()
@@ -151,8 +149,6 @@ async def get_workspace_tree(workspace_id: str):
     Lazy-load folder/sheet tree for a specific workspace when user expands it.
     Called by frontend when user clicks a workspace in sidebar.
     """
-    import sys, os
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'mcp'))
     from utils.smartsheet_client import get_client as get_smartsheet_client
     try:
         client = get_smartsheet_client()

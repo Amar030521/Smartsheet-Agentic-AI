@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 
+const BACKEND_URL = process.env.REACT_APP_API_URL || '';
+
 export function useDynamicSidebar(sessionId) {
   const [sections, setSections] = useState([]);
   const [treeData, setTreeData] = useState(null);
@@ -18,8 +20,7 @@ export function useDynamicSidebar(sessionId) {
   const loadSidebar = useCallback(async () => {
     try {
       setLoading(true);
-      const BACKEND = process.env.REACT_APP_API_URL || '';
-      const res = await fetch(`${BACKEND}/api/v1/sidebar`);
+      const res = await fetch(`${BACKEND_URL}/api/v1/sidebar`);
       const data = await res.json();
 
       console.log('[Sidebar] response:', data);
