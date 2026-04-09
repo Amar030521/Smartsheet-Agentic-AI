@@ -315,6 +315,14 @@ export default function App() {
     error: 'Connection Error'
   }[healthStatus] || 'Unknown';
 
+  // Auth gate — show login if not authenticated
+  if (authLoading) return (
+    <div style={{ minHeight:'100vh', display:'flex', alignItems:'center', justifyContent:'center', background:'#fff7f0' }}>
+      <div style={{ fontSize:14, color:'#b07a55' }}>Loading...</div>
+    </div>
+  );
+  if (!user) return <LoginPage onLogin={login} />;
+
   return (
     <>
     <div className="app">
@@ -343,7 +351,18 @@ export default function App() {
           </div>
         </div>
 
-        <div className="header-right">
+        <div className="header-right" style={{ display:'flex', alignItems:'center', gap:8 }}>
+          <span style={{ fontSize:12, color:'#7a4f30', fontWeight:600 }}>👤 {user.name}</span>
+          {user.is_admin && (
+            <button className="header-btn" onClick={() => setShowAdmin(true)}
+              style={{ background:'#fff3ea', color:'#d4651a', border:'1px solid #f0d5be' }}>
+              ⚙️ Admin
+            </button>
+          )}
+          <button className="header-btn" onClick={logout}
+            style={{ color:'#7a4f30' }}>
+            Sign out
+          </button>
           <button className="header-btn" onClick={handleNewSession}>+ New Chat</button>
         </div>
       </header>
