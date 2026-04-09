@@ -643,5 +643,6 @@ export default function App() {
         </div>
       )}
     </div>
+    {showAdmin && <AdminPanel token={getToken()} onClose={() => setShowAdmin(false)} />}
   );
 }
