@@ -183,7 +183,7 @@ function Panel({ panel }) {
     });
   },[panel]);
 
-  const keys = panel.datasets?panel.datasets.map(d=>d.label):['value'];
+  const keys = useMemo(()=>panel.datasets?panel.datasets.map(d=>d.label):['value'],[panel]);
   const total = useMemo(()=>panel.datasets
     ?panel.datasets.reduce((s,ds)=>s+ds.values.reduce((a,v)=>a+(parseFloat(v)||0),0),0)
     :(panel.values||[]).reduce((s,v)=>s+(parseFloat(v)||0),0),[panel]);
@@ -425,8 +425,6 @@ export default function DashboardCard({ data }) {
 
   const tabs = data.tabs?.length ? data.tabs : [{label:'Overview',panels:data.panels||[]}];
   const currentPanels = tabs[activeTab]?.panels||[];
-  const cols = getGridCols(currentPanels);
-  const n = currentPanels.length;
 
   const kpiCount = data.kpis?.length||0;
   const kpiCols = kpiCount===1?'1fr'
