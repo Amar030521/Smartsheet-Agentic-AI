@@ -52,6 +52,7 @@ function StatGrid({ data }) {
       {data.title && <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#b07a55', marginBottom: 10 }}>{data.title}</div>}
       <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(data.items.length, 4)}, 1fr)`, gap: 10 }}>
         {data.items.map((item, i) => {
+          const s = STATUS_COLOR[item.status] || STATUS_COLOR.neutral;
           const vLen = String(item.value).length;
           const vSize = vLen > 8 ? 18 : vLen > 5 ? 22 : 26;
           return (
