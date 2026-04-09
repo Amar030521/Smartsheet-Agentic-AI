@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 
 const BACKEND_URL = process.env.REACT_APP_API_URL || '';
 
-export function useDynamicSidebar(sessionId, getToken) {
+export function useDynamicSidebar(sessionId, getToken, user) {
   const [sections, setSections] = useState([]);
   const [treeData, setTreeData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -94,9 +94,13 @@ export function useDynamicSidebar(sessionId, getToken) {
     }
   }, []);
 
+  // Clear and reload sidebar whenever user identity changes
   useEffect(() => {
+    if (!user) return; // Don't load until auth is confirmed
+    setTreeData(null);
+    setSections([]);
     loadSidebar();
-  }, [loadSidebar]);
+  }, [user?.email]); // Re-run when user switches — email is the identity key
 
   return { sections, treeData, loading, reload: loadSidebar, loadWorkspaceTree };
 }

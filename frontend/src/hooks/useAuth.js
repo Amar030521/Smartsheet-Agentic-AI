@@ -43,6 +43,8 @@ export function useAuth() {
   const logout = useCallback(() => {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
+    // Clear session key too so next user gets a fresh session
+    localStorage.removeItem('smartsheet_agent_session');
     setUser(null);
   }, []);
 

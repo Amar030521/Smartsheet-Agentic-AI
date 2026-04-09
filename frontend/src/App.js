@@ -155,7 +155,7 @@ export default function App() {
   const [healthStatus, setHealthStatus] = useState('connecting');
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [isListening, setIsListening] = useState(false);
-  const { sections: sidebarSections, treeData: sidebarData, loading: sidebarLoading, reload: reloadSidebar, loadWorkspaceTree } = useDynamicSidebar(sessionId, getToken);
+  const { sections: sidebarSections, treeData: sidebarData, loading: sidebarLoading, reload: reloadSidebar, loadWorkspaceTree } = useDynamicSidebar(sessionId, getToken, user);
   const [expandedNodes, setExpandedNodes] = useState({});
   const [sidebarWidth, setSidebarWidth] = useState(200);
   const isResizing = React.useRef(false);
@@ -359,7 +359,7 @@ export default function App() {
               ⚙️ Admin
             </button>
           )}
-          <button className="header-btn" onClick={logout}
+          <button className="header-btn" onClick={() => { logout(); window.location.href = '/'; }}
             style={{ color:'#7a4f30' }}>
             Sign out
           </button>
