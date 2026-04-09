@@ -3,8 +3,10 @@ Chat API Routes
 """
 import uuid
 import time
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Header
+from typing import Optional
 from utils.models import ChatRequest, ChatResponse, ToolCallInfo, ChartData
+from utils.auth import decode_token, extract_token_from_header
 from utils.session_store import get_session_store
 from utils.agent import run_agent
 from utils.logger import get_logger
@@ -14,7 +16,7 @@ router = APIRouter(prefix="/api/v1", tags=["chat"])
 
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat(req: ChatRequest, request: Request):
+async def chat(req: ChatRequest, request: Request, authorization: Optional[str] = Header(None)):
     """
     Main chat endpoint.
     - Creates session if session_id not provided
@@ -37,7 +39,16 @@ async def chat(req: ChatRequest, request: Request):
     )
 
     try:
-        result = await run_agent(messages, req.message)
+        # Extract per-user Smartsheet token from JWT if auth enabled
+        smartsheet_token = None
+        if authorization:
+            token = extract_token_from_header(authorization)
+            if token:
+                payload = decode_token(token)
+                if payload:
+                    smartsheet_token = payload.get("smartsheet_token")
+
+        result = await run_agent(messages, req.message, smartsheet_token=smartsheet_token)
 
         # Persist updated conversation history
         await store.set(session_id, result["messages"])

@@ -54,3 +54,43 @@ class ErrorResponse(BaseModel):
     error: str
     detail: Optional[str] = None
     code: Optional[str] = None
+
+
+# ── AUTH MODELS ──────────────────────────────────────────────────
+
+class LoginRequest(BaseModel):
+    email: str = Field(..., min_length=5, max_length=200)
+    password: str = Field(..., min_length=1, max_length=200)
+
+
+class TokenResponse(BaseModel):
+    token: str
+    user_id: str
+    email: str
+    name: str
+    is_admin: bool = False
+
+
+class UserPublic(BaseModel):
+    id: str
+    email: str
+    name: str
+    is_active: bool
+    is_admin: bool
+    created_at: Optional[str] = None
+    last_login: Optional[str] = None
+
+
+class CreateUserRequest(BaseModel):
+    email: str = Field(..., min_length=5, max_length=200)
+    password: str = Field(..., min_length=8, max_length=200)
+    name: str = Field(..., min_length=1, max_length=100)
+    smartsheet_token: str = Field(..., min_length=10)
+    is_admin: bool = False
+
+
+class UpdateUserRequest(BaseModel):
+    name: Optional[str] = None
+    is_active: Optional[bool] = None
+    is_admin: Optional[bool] = None
+    smartsheet_token: Optional[str] = None

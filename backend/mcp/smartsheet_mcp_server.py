@@ -1386,124 +1386,76 @@ def tool_create_automation(sheet_id: str, rule_name: str, action_type: str,
                            message: str, subject: str = None,
                            trigger_type: str = "WHEN_ROWS_ADDED",
                            trigger_column: str = None,
-                           condition_column: str = None,
-                           condition_value: str = None,
                            notify_all_users: bool = False,
                            recipient_emails: list = None,
                            frequency: str = "IMMEDIATELY") -> dict:
     """
-    Create a smart automation rule with optional conditions and column-specific triggers.
+    NOTE: Smartsheet API does NOT support creating new automation rules programmatically.
+    This is an official API limitation — only list, update, and delete are supported.
 
-    trigger_type: WHEN_ROWS_ADDED | WHEN_ROWS_CHANGED | WHEN_ROWS_DELETED | WHEN_CELL_CHANGED
-    trigger_column: for WHEN_CELL_CHANGED — which column to watch (by name)
-    condition_column + condition_value: only fire if this column = this value
-                                        e.g. condition_column="Status", condition_value="Approved"
-    action_type: NOTIFICATION | UPDATE_REQUEST | APPROVAL_REQUEST | LOCK_ROW
-    frequency: IMMEDIATELY | DAILY | WEEKLY
-    recipient_emails: list of email addresses to notify
-    notify_all_users: True to notify all shared users
+    This tool returns the exact configuration needed so the user can create it manually
+    in Smartsheet (Automation → Create Workflow) in under 2 minutes.
+
+    What CAN be done via API:
+    - list_automations: list all existing rules
+    - update_automation: enable/disable, change message/subject/recipients
+    - delete_automation: remove a rule
     """
-    import requests as req_lib
     client = get_client()
-    from utils.config import get_settings
-    settings = get_settings()
 
-    headers = {
-        "Authorization": f"Bearer {settings.smartsheet_api_token}",
-        "Content-Type": "application/json"
-    }
-
-    # Resolve column names to IDs if needed
-    col_id_map = {}
-    if trigger_column or condition_column:
+    # Resolve trigger column display
+    trigger_col_info = ""
+    if trigger_column:
         try:
             sheet = client.Sheets.get_sheet(int(sheet_id))
-            col_id_map = {col.title: str(col.id_) for col in sheet.columns}
+            cols = {col.title for col in sheet.columns}
+            if trigger_column in cols:
+                trigger_col_info = f" watching column '{trigger_column}'"
+            else:
+                trigger_col_info = f" (column '{trigger_column}' not found — check name)"
         except Exception:
             pass
 
-    recipients = []
+    # Format recipients cleanly
+    recipient_list = []
     if recipient_emails:
-        recipients = [{"email": e.strip()} for e in recipient_emails]
+        recipient_list = [e.strip() for e in recipient_emails if e.strip()]
 
-    # Map action_type aliases
-    action_map = {
-        "NOTIFY_SENDER": "NOTIFICATION",
-        "NOTIFY_ALL_SHARED": "NOTIFICATION",
-        "NOTIFY_RECIPIENTS": "NOTIFICATION",
-        "NOTIFICATION_ACTION": "NOTIFICATION",
-        "NOTIFY": "NOTIFICATION",
-    }
-    api_action_type = action_map.get(action_type.upper(), action_type.upper())
+    trigger_display = {
+        "WHEN_ROWS_ADDED": "When a row is added",
+        "WHEN_ROWS_CHANGED": "When a row is changed",
+        "WHEN_ROWS_DELETED": "When a row is deleted",
+        "WHEN_CELL_CHANGED": f"When a cell changes{trigger_col_info}",
+    }.get(trigger_type.upper(), trigger_type)
 
-    # Build trigger
-    trigger = {
-        "type": trigger_type.upper(),
-        "frequency": frequency.upper()
-    }
-    # Column-specific trigger (WHEN_CELL_CHANGED)
-    if trigger_column and trigger_column in col_id_map:
-        trigger["columnId"] = int(col_id_map[trigger_column])
-    elif trigger_column:
-        trigger["columnName"] = trigger_column  # fallback
+    action_display = {
+        "NOTIFICATION": "Send notification",
+        "UPDATE_REQUEST": "Send update request",
+        "APPROVAL_REQUEST": "Send approval request",
+    }.get(action_type.upper(), action_type)
 
-    # Build condition (only fire when column = value)
-    conditions = []
-    if condition_column and condition_value:
-        col_id = col_id_map.get(condition_column)
-        if col_id:
-            conditions.append({
-                "columnId": int(col_id),
-                "operator": "EQUAL",
-                "values": [condition_value]
-            })
-
-    payload = {
-        "name": rule_name,
-        "enabled": True,
-        "triggerInfo": trigger,
-        "action": {
-            "type": api_action_type,
-            "message": message,
+    return {
+        "success": False,
+        "api_limitation": "Smartsheet API does not support creating automation rules programmatically. This is a confirmed official limitation.",
+        "what_you_can_do": "Create this automation manually in Smartsheet — it takes under 2 minutes.",
+        "manual_steps": "Automation tab → Create Workflow → Create from scratch",
+        "config_to_create": {
+            "name": rule_name,
+            "trigger": trigger_display,
+            "frequency": frequency,
+            "action": action_display,
             "subject": subject or rule_name,
-            "notifyAllSharedUsers": notify_all_users,
-            "includeAllColumns": True,
-            "includeAttachments": False,
-            "includeDiscussions": False,
-            "recipients": recipients
+            "message": message,
+            "recipients": recipient_list if recipient_list else ("All shared users" if notify_all_users else "Set in Smartsheet UI"),
+            "include_all_columns": True
+        },
+        "api_capabilities": {
+            "list_automations": "✅ Supported — use list_automations",
+            "update_automation": "✅ Supported — can change message, subject, recipients, enable/disable",
+            "delete_automation": "✅ Supported — use delete_automation",
+            "create_automation": "❌ Not supported by Smartsheet API"
         }
     }
-
-    if conditions:
-        payload["conditions"] = {"type": "ANY", "conditions": conditions}
-
-    url = f"https://api.smartsheet.com/2.0/sheets/{sheet_id}/automationrules"
-    try:
-        response = req_lib.post(url, json=payload, headers=headers)
-        data = response.json()
-        if response.status_code in (200, 201):
-            rule = data.get("result", data)
-            summary = f"trigger: {trigger_type}"
-            if trigger_column: summary += f" on '{trigger_column}'"
-            if condition_column: summary += f" when {condition_column}={condition_value}"
-            summary += f", action: {api_action_type}"
-            if recipients: summary += f", notify: {[r['email'] for r in recipients]}"
-            return {
-                "success": True,
-                "rule_id": str(rule.get("id", "")),
-                "rule_name": rule_name,
-                "summary": summary,
-                "message": f"✅ Automation '{rule_name}' created — {summary}"
-            }
-        else:
-            return {
-                "error": data.get("message", str(data)),
-                "status": response.status_code,
-                "payload_sent": payload,
-                "hint": "Ensure you have Owner/Admin access. Check column names match exactly."
-            }
-    except Exception as e:
-        return {"error": str(e)}
 
 
 def tool_update_automation(sheet_id: str, rule_id: str,
@@ -2632,13 +2584,28 @@ MCP_TOOL_DISPATCH = {
 }
 
 
-def execute_tool(name: str, input_args: dict) -> dict:
-    """Execute a tool by name. Returns result dict."""
+def execute_tool(name: str, input_args: dict, smartsheet_token: str = None) -> dict:
+    """Execute a tool by name.
+    If smartsheet_token provided, uses that user's Smartsheet API token.
+    """
+    import sys as _sys
+    import os as _os
     fn = MCP_TOOL_DISPATCH.get(name)
     if not fn:
         return {"error": f"Unknown tool: {name}"}
     try:
-        result = fn(**input_args)
+        # Per-user token: temporarily swap get_client
+        if smartsheet_token:
+            from utils.smartsheet_client import get_client_for_token
+            import mcp.smartsheet_mcp_server as _self_mod
+            _orig_gc = _self_mod.get_client
+            _self_mod.get_client = lambda: get_client_for_token(smartsheet_token)
+            try:
+                result = fn(**input_args)
+            finally:
+                _self_mod.get_client = _orig_gc
+        else:
+            result = fn(**input_args)
         logger.info("Tool executed", tool=name, success=True)
         return result
     except Exception as e:

@@ -298,7 +298,7 @@ def _call_claude_with_retry(client, model, max_tokens, system, tools, messages, 
                 raise e
 
 
-async def run_agent(messages: list, user_message: str) -> dict:
+async def run_agent(messages: list, user_message: str, smartsheet_token: str = None) -> dict:
     """Main agentic loop with retry handling."""
     from datetime import date, timedelta
     today = date.today()
@@ -421,7 +421,7 @@ When user says "today", "tomorrow", "yesterday", "this week", "next week" — us
                 "display": _tool_display_name(tool_name)
             })
 
-            result = execute_tool(tool_name, tool_input)
+            result = execute_tool(tool_name, tool_input, smartsheet_token=smartsheet_token)
 
             if isinstance(result, dict) and "chart_data" in result and not chart_data:
                 chart_data = result["chart_data"]

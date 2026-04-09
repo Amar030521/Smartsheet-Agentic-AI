@@ -1,4 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { useAuth } from './hooks/useAuth';
+import LoginPage from './components/LoginPage';
+import AdminPanel from './components/AdminPanel';
 import { v4 as uuidv4 } from 'uuid';
 import { sendMessage, clearSession, getHealth } from './utils/api';
 import { useVoiceInput } from './hooks/useVoiceInput';
@@ -138,10 +141,13 @@ function WorkspaceNode({ node, depth, expanded, setExpanded, onSend, loadWorkspa
         </div>
       )}
     </div>
+    {showAdmin && <AdminPanel token={getToken()} onClose={() => setShowAdmin(false)} />}
   );
 }
 
 export default function App() {
+  const { user, loading: authLoading, login, logout, getToken } = useAuth();
+  const [showAdmin, setShowAdmin] = useState(false);
   const [messages, setMessages] = useState([WELCOME_MESSAGE]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);

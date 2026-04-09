@@ -39,6 +39,13 @@ class Settings(BaseSettings):
     # Rate limiting
     rate_limit_per_minute: int = 30
 
+    # Supabase
+    supabase_url: str = Field(default="", env="SUPABASE_URL")
+    supabase_key: str = Field(default="", env="SUPABASE_KEY")
+
+    # JWT
+    jwt_secret: str = Field(default="change_this_jwt_secret_in_production", env="JWT_SECRET")
+
     # CORS
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
 

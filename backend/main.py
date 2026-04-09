@@ -34,6 +34,7 @@ from utils.logger import setup_logging, get_logger
 from utils.session_store import get_session_store
 from routes.chat import router as chat_router
 from routes.health import router as health_router
+from routes.auth import router as auth_router
 
 setup_logging()
 logger = get_logger(__name__)
@@ -114,6 +115,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 # ─── ROUTES ────────────────────────────────────────────────────
 
+app.include_router(auth_router)
 app.include_router(chat_router)
 app.include_router(health_router)
 
