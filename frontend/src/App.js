@@ -155,7 +155,7 @@ export default function App() {
   const [healthStatus, setHealthStatus] = useState('connecting');
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [isListening, setIsListening] = useState(false);
-  const { sections: sidebarSections, treeData: sidebarData, loading: sidebarLoading, reload: reloadSidebar, loadWorkspaceTree } = useDynamicSidebar(sessionId);
+  const { sections: sidebarSections, treeData: sidebarData, loading: sidebarLoading, reload: reloadSidebar, loadWorkspaceTree } = useDynamicSidebar(sessionId, getToken);
   const [expandedNodes, setExpandedNodes] = useState({});
   const [sidebarWidth, setSidebarWidth] = useState(200);
   const isResizing = React.useRef(false);

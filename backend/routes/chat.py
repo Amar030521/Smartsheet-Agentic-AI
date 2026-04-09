@@ -118,14 +118,24 @@ async def get_history(session_id: str):
 
 
 @router.get("/sidebar")
-async def get_sidebar_data():
+async def get_sidebar_data(authorization: Optional[str] = Header(None)):
     """
     Fast sidebar load: workspaces list + recent sheets + dashboards.
-    Workspace folders are loaded lazily via /sidebar/workspace/{id} when user expands.
+    Uses the logged-in user's Smartsheet token if provided.
     """
-    from utils.smartsheet_client import get_client as get_smartsheet_client
+    from utils.smartsheet_client import get_client as get_smartsheet_client, get_client_for_token
     try:
-        client = get_smartsheet_client()
+        # Use per-user token from JWT if available
+        ss_client = None
+        if authorization:
+            token = extract_token_from_header(authorization)
+            if token:
+                payload = decode_token(token)
+                if payload and payload.get("smartsheet_token"):
+                    ss_client = get_client_for_token(payload["smartsheet_token"])
+        if not ss_client:
+            ss_client = get_smartsheet_client()
+        client = ss_client
 
         # Fast: just workspace names and IDs (no folder loading)
         ws_list = client.Workspaces.list_workspaces(include_all=True)
@@ -155,14 +165,23 @@ async def get_sidebar_data():
 
 
 @router.get("/sidebar/workspace/{workspace_id}")
-async def get_workspace_tree(workspace_id: str):
+async def get_workspace_tree(workspace_id: str, authorization: Optional[str] = Header(None)):
     """
     Lazy-load folder/sheet tree for a specific workspace when user expands it.
-    Called by frontend when user clicks a workspace in sidebar.
+    Uses the logged-in user's Smartsheet token if provided.
     """
-    from utils.smartsheet_client import get_client as get_smartsheet_client
+    from utils.smartsheet_client import get_client as get_smartsheet_client, get_client_for_token
     try:
-        client = get_smartsheet_client()
+        ss_client = None
+        if authorization:
+            token = extract_token_from_header(authorization)
+            if token:
+                payload = decode_token(token)
+                if payload and payload.get("smartsheet_token"):
+                    ss_client = get_client_for_token(payload["smartsheet_token"])
+        if not ss_client:
+            ss_client = get_smartsheet_client()
+        client = ss_client
 
         def build_folder_tree(folder):
             result = {

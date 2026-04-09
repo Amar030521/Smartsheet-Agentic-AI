@@ -25,7 +25,19 @@ from utils.smartsheet_client import (
     normalize_row, invalidate_column_cache
 )
 
+import threading
 logger = get_logger(__name__)
+
+# Per-request Smartsheet token storage — thread-safe
+_request_local = threading.local()
+
+def _get_current_client():
+    """Get Smartsheet client for current request — uses per-user token if set."""
+    token = getattr(_request_local, 'smartsheet_token', None)
+    if token:
+        from utils.smartsheet_client import get_client_for_token
+        return get_client_for_token(token)
+    return get_client()
 settings = get_settings()
 
 
@@ -102,7 +114,7 @@ def safe_cell_value(cell) -> str:
 
 def tool_list_workspaces() -> dict:
     """List all workspaces the user has access to."""
-    client = get_client()
+    client = _get_current_client()
     result = client.Workspaces.list_workspaces(include_all=True)
     return {
         "workspaces": [
@@ -145,7 +157,7 @@ def tool_get_workspace_contents(workspace_id: str, shallow: bool = True) -> dict
     shallow=False: recursively fetches all sheets inside every folder — slower.
     Always start with shallow=True, then use get_folder_contents for specific folders.
     """
-    client = get_client()
+    client = _get_current_client()
     ws = client.Workspaces.get_workspace(int(workspace_id))
 
     if shallow:
@@ -190,13 +202,13 @@ def tool_get_workspace_contents(workspace_id: str, shallow: bool = True) -> dict
 
 def tool_get_folder_contents(folder_id: str) -> dict:
     """Get all sheets, reports and sub-folders inside a specific folder by folder ID."""
-    client = get_client()
+    client = _get_current_client()
     return _recurse_folder(client, int(folder_id), f"Folder {folder_id}")
 
 
 def tool_list_sheets() -> dict:
     """List all sheets across all workspaces."""
-    client = get_client()
+    client = _get_current_client()
     result = client.Sheets.list_sheets(include_all=True)
     return {
         "sheets": [
@@ -213,7 +225,7 @@ def tool_get_sheet(sheet_id: str, max_rows: int = 500) -> dict:
     Returns column names, types, writeability, and all row data.
     ALWAYS call this before create_row to get actual column names.
     """
-    client = get_client()
+    client = _get_current_client()
     try:
         sheet = client.Sheets.get_sheet(int(sheet_id))
     except Exception as e:
@@ -697,7 +709,7 @@ def _format_cell_value(col_type: str, value, col_options: list = None):
 def tool_create_row(sheet_id: str, row_data: dict) -> dict:
     """Create a new row. row_data: {col_name: value}."""
     import smartsheet as ss_lib
-    client = get_client()
+    client = _get_current_client()
 
     # Fetch sheet to get column metadata
     try:
@@ -856,7 +868,7 @@ def tool_create_row(sheet_id: str, row_data: dict) -> dict:
 def tool_update_row(sheet_id: str, row_id: str, updates: dict) -> dict:
     """Update cells in a row. updates: {col_name: value}."""
     import smartsheet as ss_lib
-    client = get_client()
+    client = _get_current_client()
 
     try:
         sheet = client.Sheets.get_sheet(int(sheet_id))
@@ -976,7 +988,7 @@ def tool_update_row(sheet_id: str, row_id: str, updates: dict) -> dict:
 
 def tool_delete_row(sheet_id: str, row_id: str) -> dict:
     """Delete a row from a sheet. Always confirm with user before calling."""
-    client = get_client()
+    client = _get_current_client()
     client.Sheets.delete_rows(int(sheet_id), [int(row_id)])
     logger.info("Row deleted", sheet_id=sheet_id, row_id=row_id)
     return {"success": True, "message": f"Row {row_id} deleted from sheet {sheet_id}"}
@@ -984,7 +996,7 @@ def tool_delete_row(sheet_id: str, row_id: str) -> dict:
 
 def tool_list_dashboards() -> dict:
     """List all dashboards (Sights) in the account."""
-    client = get_client()
+    client = _get_current_client()
     result = client.Sights.list_sights(include_all=True)
     return {
         "dashboards": [{"id": str(s.id), "name": s.name} for s in result.data],
@@ -999,7 +1011,7 @@ def tool_get_dashboard(sight_id: str, fetch_data: bool = False) -> dict:
     fetch_data=True: slow — fetches actual data from linked reports/sheets per widget.
     Use fetch_data=False first to show the dashboard, then fetch_data=True only if user asks for data.
     """
-    client = get_client()
+    client = _get_current_client()
     try:
         sight = client.Sights.get_sight(int(sight_id))
     except Exception as e:
@@ -1099,7 +1111,7 @@ def tool_create_dashboard(name: str, workspace_id: str = None) -> dict:
 
 def tool_list_scc_programs() -> dict:
     """List all Control Center programs."""
-    client = get_client()
+    client = _get_current_client()
     try:
         result = client.request("GET", "/programs", params={"includeAll": "true"})
         programs = result.get("data", []) if isinstance(result, dict) else []
@@ -1116,7 +1128,7 @@ def tool_list_scc_programs() -> dict:
 
 def tool_list_blueprints(program_id: str) -> dict:
     """List blueprints available in a Control Center program."""
-    client = get_client()
+    client = _get_current_client()
     try:
         result = client.request("GET", f"/programs/{program_id}/blueprints")
         blueprints = result.get("data", []) if isinstance(result, dict) else []
@@ -1152,7 +1164,7 @@ def tool_rollout_project(intake_sheet_id: str, profile_data: dict,
     approval_value: Value that triggers provisioning — "true" for checkbox, or dropdown value like "Approved"
     """
     import smartsheet as ss_lib
-    client = get_client()
+    client = _get_current_client()
 
     try:
         # Step 1: Fetch the intake sheet to get column metadata
@@ -1263,7 +1275,7 @@ def tool_rollout_project(intake_sheet_id: str, profile_data: dict,
 
 def tool_list_scc_projects(program_id: str) -> dict:
     """List rolled-out projects."""
-    client = get_client()
+    client = _get_current_client()
     try:
         result = client.request("GET", f"/programs/{program_id}/projects")
         projects = result.get("data", []) if isinstance(result, dict) else []
@@ -1281,7 +1293,7 @@ def tool_list_scc_projects(program_id: str) -> dict:
 
 def tool_search_sheets(query: str) -> dict:
     """Search across all sheets for a keyword."""
-    client = get_client()
+    client = _get_current_client()
     result = client.Search.search(query)
     results = []
     for item in (result.results or [])[:20]:
@@ -1359,7 +1371,7 @@ def tool_add_widget_to_dashboard(sight_id: str, widget_type: str, title: str, sh
 
 def tool_list_automations(sheet_id: str) -> dict:
     """List all automation rules on a sheet."""
-    client = get_client()
+    client = _get_current_client()
     try:
         result = client.Sheets.list_automation_rules(int(sheet_id))
         rules = []
@@ -1401,7 +1413,7 @@ def tool_create_automation(sheet_id: str, rule_name: str, action_type: str,
     - update_automation: enable/disable, change message/subject/recipients
     - delete_automation: remove a rule
     """
-    client = get_client()
+    client = _get_current_client()
 
     # Resolve trigger column display
     trigger_col_info = ""
@@ -1461,7 +1473,7 @@ def tool_create_automation(sheet_id: str, rule_name: str, action_type: str,
 def tool_update_automation(sheet_id: str, rule_id: str,
                            enabled: bool = None, message: str = None) -> dict:
     """Enable, disable or update an existing automation rule."""
-    client = get_client()
+    client = _get_current_client()
     try:
         # Get existing rule first
         rule = client.Sheets.get_automation_rule(int(sheet_id), int(rule_id))
@@ -1482,7 +1494,7 @@ def tool_update_automation(sheet_id: str, rule_id: str,
 
 def tool_delete_automation(sheet_id: str, rule_id: str) -> dict:
     """Delete an automation rule from a sheet. ALWAYS confirm before calling."""
-    client = get_client()
+    client = _get_current_client()
     try:
         client.Sheets.delete_automation_rule(int(sheet_id), int(rule_id))
         return {
@@ -1499,7 +1511,7 @@ def tool_create_webhook(sheet_id: str, name: str, callback_url: str) -> dict:
     Webhook fires on any row change and POSTs to callback_url.
     Useful for real-time integrations.
     """
-    client = get_client()
+    client = _get_current_client()
     try:
         import smartsheet as ss_lib
         webhook = ss_lib.models.Webhook({
@@ -1526,7 +1538,7 @@ def tool_create_webhook(sheet_id: str, name: str, callback_url: str) -> dict:
 
 def tool_list_webhooks() -> dict:
     """List all webhooks in the account."""
-    client = get_client()
+    client = _get_current_client()
     try:
         result = client.Webhooks.list_webhooks(include_all=True)
         return {
@@ -1559,7 +1571,7 @@ def tool_get_sheet_with_links(sheet_id: str, max_rows: int = 200) -> dict:
     this returns the actual linked value + the source sheet info.
     Use this instead of get_sheet when a sheet has cross-sheet references.
     """
-    client = get_client()
+    client = _get_current_client()
     # include=["objectValue"] resolves cross-sheet linked cell values
     sheet = client.Sheets.get_sheet(int(sheet_id))
     rev_map = {col.id_: col.title for col in sheet.columns}
@@ -1659,7 +1671,7 @@ def tool_list_cross_sheet_references(sheet_id: str) -> dict:
     List all cross-sheet references (VLOOKUP-like formulas) defined on a sheet.
     Shows which other sheets this sheet pulls data from and the status of each reference.
     """
-    client = get_client()
+    client = _get_current_client()
     try:
         result = client.Sheets.list_cross_sheet_references(int(sheet_id))
         refs = []
@@ -1689,7 +1701,7 @@ def tool_get_linked_sheet_value(sheet_id: str, row_id: str, column_name: str) ->
     Get the source value of a cross-sheet linked cell — follows the link to its origin sheet.
     Use when a cell shows a value linked from another sheet and you need to know the source.
     """
-    client = get_client()
+    client = _get_current_client()
     try:
         sheet = client.Sheets.get_sheet(int(sheet_id))
         col_map = {col.title: col.id_ for col in sheet.columns}
@@ -1732,7 +1744,7 @@ def tool_get_sheet_by_name(sheet_name: str, workspace_id: str = None) -> dict:
     """
     Find and fetch a sheet by name. workspace_id: if provided, searches only within that workspace (recommended to avoid finding wrong sheets). Without workspace_id searches globally.
     """
-    client = get_client()
+    client = _get_current_client()
     try:
         if workspace_id:
             # Scoped search — only look in this workspace
@@ -1922,7 +1934,7 @@ def tool_send_row_email(sheet_id: str, row_ids: list, recipient_emails: list,
     recipient_emails: list of email addresses to send to.
     """
     import smartsheet as ss_lib
-    client = get_client()
+    client = _get_current_client()
     try:
         email_obj = ss_lib.models.MultiRowEmail()
         email_obj.send_to = [
@@ -1999,7 +2011,7 @@ def tool_find_contact_in_sheet(sheet_id: str, name_or_email: str) -> dict:
     Returns matching rows with contact email addresses.
     Use before send_row_email to find the right PM email from a sheet.
     """
-    client = get_client()
+    client = _get_current_client()
     try:
         sheet = client.Sheets.get_sheet(int(sheet_id))
         col_map = {col.id_: col.title for col in sheet.columns}
@@ -2035,7 +2047,7 @@ def tool_get_sheet_summary(sheet_id: str) -> dict:
     top values per column, and sample rows. Much smaller than get_sheet.
     Use this instead of get_sheet when building a DASHBOARD::.
     """
-    client = get_client()
+    client = _get_current_client()
     try:
         sheet = client.Sheets.get_sheet(int(sheet_id))
     except Exception as e:
@@ -2586,31 +2598,24 @@ MCP_TOOL_DISPATCH = {
 
 def execute_tool(name: str, input_args: dict, smartsheet_token: str = None) -> dict:
     """Execute a tool by name.
-    If smartsheet_token provided, uses that user's Smartsheet API token.
+    If smartsheet_token provided, stores it in thread-local so all get_client()
+    calls within this request use the user's own token.
     """
-    import sys as _sys
-    import os as _os
     fn = MCP_TOOL_DISPATCH.get(name)
     if not fn:
         return {"error": f"Unknown tool: {name}"}
     try:
-        # Per-user token: temporarily swap get_client
-        if smartsheet_token:
-            from utils.smartsheet_client import get_client_for_token
-            import mcp.smartsheet_mcp_server as _self_mod
-            _orig_gc = _self_mod.get_client
-            _self_mod.get_client = lambda: get_client_for_token(smartsheet_token)
-            try:
-                result = fn(**input_args)
-            finally:
-                _self_mod.get_client = _orig_gc
-        else:
-            result = fn(**input_args)
+        # Set per-user token in thread-local storage
+        _request_local.smartsheet_token = smartsheet_token if smartsheet_token else None
+        result = fn(**input_args)
         logger.info("Tool executed", tool=name, success=True)
         return result
     except Exception as e:
         logger.error("Tool execution failed", tool=name, error=str(e))
         return {"error": str(e), "tool": name}
+    finally:
+        # Always clear token after tool execution
+        _request_local.smartsheet_token = None
 
 
 # ═══════════════════════════════════════════════════════════════

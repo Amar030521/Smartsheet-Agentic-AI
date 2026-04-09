@@ -14,7 +14,7 @@ from utils.auth import (
 )
 from utils.database import (
     get_user_by_email, create_user, get_all_users,
-    update_user, update_password, delete_user, record_login
+    update_user, update_password, delete_user, record_login, get_login_logs
 )
 from utils.logger import get_logger
 
@@ -162,3 +162,11 @@ async def deactivate_user(user_id: str, authorization: str = Header(None)):
     if not success:
         raise HTTPException(status_code=404, detail="User not found")
     return {"message": "User deactivated"}
+
+
+@router.get("/logs")
+async def get_logs(authorization: str = Header(None)):
+    """Get recent login logs. Admin only."""
+    require_admin(authorization)
+    logs = get_login_logs(limit=100)
+    return {"logs": logs, "total": len(logs)}

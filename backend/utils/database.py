@@ -14,11 +14,15 @@ _supabase = None
 
 
 def get_db():
-    """Return Supabase client singleton."""
+    """Return Supabase client singleton. Lazy init — only connects on first use."""
     global _supabase
     if _supabase is None:
-        from supabase import create_client
-        _supabase = create_client(settings.supabase_url, settings.supabase_key)
+        try:
+            from supabase import create_client
+            _supabase = create_client(settings.supabase_url, settings.supabase_key)
+        except Exception as e:
+            logger.error("Supabase connection failed", error=str(e))
+            raise
     return _supabase
 
 
@@ -111,6 +115,24 @@ def delete_user(user_id: str) -> bool:
 
 
 def record_login(user_id: str, ip: str = None):
-    """Update last_login timestamp."""
+    """Update last_login timestamp and insert login log."""
     from datetime import datetime
     update_user(user_id, {"last_login": datetime.utcnow().isoformat()})
+    try:
+        get_db().table("login_logs").insert({
+            "user_id": user_id,
+            "ip_address": ip or "unknown",
+            "logged_in_at": datetime.utcnow().isoformat()
+        }).execute()
+    except Exception:
+        pass  # login_logs table optional
+
+
+def get_login_logs(limit: int = 50) -> list:
+    """Get recent login logs with user email. Admin only."""
+    try:
+        result = get_db().table("login_logs")            .select("*, users(email, name)")            .order("logged_in_at", desc=True)            .limit(limit)            .execute()
+        return result.data or []
+    except Exception as e:
+        logger.error("Failed to fetch login logs", error=str(e))
+        return []
