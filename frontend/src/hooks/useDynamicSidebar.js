@@ -18,7 +18,8 @@ export function useDynamicSidebar(sessionId) {
   const loadSidebar = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch('/api/v1/sidebar');
+      const BACKEND = process.env.REACT_APP_API_URL || '';
+      const res = await fetch(`${BACKEND}/api/v1/sidebar`);
       const data = await res.json();
 
       console.log('[Sidebar] response:', data);
@@ -71,7 +72,8 @@ export function useDynamicSidebar(sessionId) {
 
   const loadWorkspaceTree = useCallback(async (workspaceId) => {
     try {
-      const res = await fetch(`/api/v1/sidebar/workspace/${workspaceId}`);
+      const BACKEND = process.env.REACT_APP_API_URL || '';
+      const res = await fetch(`${BACKEND}/api/v1/sidebar/workspace/${workspaceId}`);
       const wsData = await res.json();
       if (wsData.error) return null;
       setTreeData(prev => {
