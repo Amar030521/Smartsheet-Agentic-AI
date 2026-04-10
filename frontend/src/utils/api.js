@@ -1,13 +1,21 @@
 import axios from 'axios';
 
-// Backend URL: set REACT_APP_API_URL in Vercel environment variables
-// e.g. https://your-backend.onrender.com
 const BACKEND_URL = process.env.REACT_APP_API_URL || '';
+const TOKEN_KEY = 'smartsheet_agent_token';
 
 const api = axios.create({
   baseURL: `${BACKEND_URL}/api/v1`,
-  timeout: 300000, // 5 min for complex recursive queries
+  timeout: 300000,
   headers: { 'Content-Type': 'application/json' }
+});
+
+// Attach JWT to every request automatically
+api.interceptors.request.use(config => {
+  const token = localStorage.getItem(TOKEN_KEY);
+  if (token) {
+    config.headers['Authorization'] = `Bearer ${token}`;
+  }
+  return config;
 });
 
 // Response interceptor for error normalization

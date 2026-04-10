@@ -51,6 +51,9 @@ async def chat(req: ChatRequest, request: Request, authorization: Optional[str] 
                     smartsheet_token = payload.get("smartsheet_token")
                     user_id = payload.get("user_id")
 
+        # Capture history length BEFORE run_agent modifies messages list
+        is_first_message = len(messages) == 0
+
         result = await run_agent(messages, req.message, smartsheet_token=smartsheet_token)
 
         # Persist updated conversation history (in-memory fallback)
@@ -59,8 +62,8 @@ async def chat(req: ChatRequest, request: Request, authorization: Optional[str] 
         # Persist to Supabase if user is authenticated
         if user_id:
             try:
-                # Create session if first message
-                if len(messages) == 0:
+                if is_first_message:
+                    # First message in session — create session record
                     title = req.message[:60] + ("..." if len(req.message) > 60 else "")
                     chat_store.create_session_if_not_exists(session_id, user_id, title)
                 else:
