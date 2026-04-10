@@ -62,11 +62,10 @@ async def chat(req: ChatRequest, request: Request, authorization: Optional[str] 
         # Persist to Supabase if user is authenticated
         if user_id:
             try:
-                if is_first_message:
-                    # First message in session — create session record
-                    title = req.message[:60] + ("..." if len(req.message) > 60 else "")
-                    chat_store.create_session_if_not_exists(session_id, user_id, title)
-                else:
+                # Always ensure session exists — handles orphan session_ids from before auth was added
+                title = req.message[:60] + ("..." if len(req.message) > 60 else "")
+                chat_store.create_session_if_not_exists(session_id, user_id, title)
+                if not is_first_message:
                     chat_store.touch_session(session_id)
                 # Save user message
                 chat_store.save_message(session_id, "user", req.message)

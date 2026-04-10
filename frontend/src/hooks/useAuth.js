@@ -36,6 +36,8 @@ export function useAuth() {
     const userData = { email: data.email, name: data.name, is_admin: data.is_admin, user_id: data.user_id };
     localStorage.setItem(TOKEN_KEY, data.token);
     localStorage.setItem(USER_KEY, JSON.stringify(userData));
+    // Clear old session so user starts fresh — prevents orphan session_id issues
+    localStorage.removeItem('smartsheet_agent_session');
     setUser(userData);
     return userData;
   }, []);
