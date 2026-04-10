@@ -121,21 +121,26 @@ def get_session_messages(session_id: str) -> list:
         result = get_db().table("chat_messages")\
             .select("*")\
             .eq("session_id", session_id)\
-            .order("created_at", asc=True)\
+            .order("created_at", desc=False)\
             .execute()
         messages = []
         for m in (result.data or []):
             try:
+                def _p(v):
+                    if v is None: return None
+                    if isinstance(v, (dict, list)): return v
+                    try: return json.loads(v)
+                    except: return v
                 messages.append({
                     "id": m["id"],
                     "role": m["role"],
                     "content": m["content"],
-                    "tool_calls": json.loads(m["tool_calls"]) if m.get("tool_calls") else [],
-                    "dashboard_data": json.loads(m["dashboard_data"]) if m.get("dashboard_data") else None,
-                    "infographics": json.loads(m["infographics"]) if m.get("infographics") else [],
-                    "followups": json.loads(m["followups"]) if m.get("followups") else [],
-                    "chart_data": json.loads(m["chart_data"]) if m.get("chart_data") else None,
-                    "created_at": m["created_at"],
+                    "tool_calls": _p(m.get("tool_calls")) or [],
+                    "dashboard_data": _p(m.get("dashboard_data")),
+                    "infographics": _p(m.get("infographics")) or [],
+                    "followups": _p(m.get("followups")) or [],
+                    "chart_data": _p(m.get("chart_data")),
+                    "created_at": m.get("created_at"),
                 })
             except Exception:
                 continue
@@ -152,7 +157,7 @@ def get_session_history_for_agent(session_id: str) -> list:
         result = get_db().table("chat_messages")\
             .select("role, content")\
             .eq("session_id", session_id)\
-            .order("created_at", asc=True)\
+            .order("created_at", desc=False)\
             .execute()
         return [{"role": m["role"], "content": m["content"]}
                 for m in (result.data or [])]

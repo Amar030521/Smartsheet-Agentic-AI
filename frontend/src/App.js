@@ -304,7 +304,15 @@ export default function App() {
   const loadHistorySession = useCallback(async (session) => {
     // Load a past session's messages into the chat
     const msgs = await loadMessages(session.id);
-    if (!msgs.length) return;
+    if (!msgs.length) {
+      // Session exists but messages couldn't load — show error state
+      setMessages([{
+        id: uuidv4(), role: 'assistant',
+        content: '⚠️ Could not load messages for this session. The session may be empty or there was a connection issue.',
+        tool_calls: [], chart_data: null, needs_confirmation: false, followups: [], infographics: []
+      }]);
+      return;
+    }
     const formatted = msgs.map(m => ({
       id: m.id || uuidv4(),
       role: m.role,
@@ -317,6 +325,8 @@ export default function App() {
       needs_confirmation: false,
     }));
     setMessages(formatted);
+    // Store session id in localStorage so the session continues correctly
+    localStorage.setItem(SESSION_KEY, session.id);
   }, [loadMessages]);
 
   const handleNewSession = async () => {
