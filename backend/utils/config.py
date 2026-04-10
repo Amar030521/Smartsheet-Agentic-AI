@@ -47,7 +47,10 @@ class Settings(BaseSettings):
     jwt_secret: str = Field(default="change_this_jwt_secret_in_production", env="JWT_SECRET")
 
     # CORS
-    cors_origins: str = "http://localhost:3000,http://localhost:5173"
+    cors_origins: str = Field(
+        default="http://localhost:3000,http://localhost:5173",
+        env="CORS_ORIGINS"
+    )
 
     # Logging
     log_level: str = "INFO"
