@@ -30,7 +30,6 @@ async def chat(req: ChatRequest, request: Request, authorization: Optional[str] 
     start_time = time.time()
     store = get_session_store()
 
-    # Session management
     session_id = req.session_id or str(uuid.uuid4())
     messages = await store.get(session_id)
 
@@ -43,7 +42,6 @@ async def chat(req: ChatRequest, request: Request, authorization: Optional[str] 
     )
 
     try:
-        # Extract per-user info from JWT
         smartsheet_token = None
         user_id = None
         if authorization:
@@ -54,25 +52,19 @@ async def chat(req: ChatRequest, request: Request, authorization: Optional[str] 
                     smartsheet_token = payload.get("smartsheet_token")
                     user_id = payload.get("user_id")
 
-        # Capture history length BEFORE run_agent modifies messages list
         is_first_message = len(messages) == 0
 
         result = await run_agent(messages, req.message, smartsheet_token=smartsheet_token)
 
-        # Persist updated conversation history (in-memory fallback)
         await store.set(session_id, result["messages"])
 
-        # Persist to Supabase if user is authenticated
         if user_id:
             try:
-                # Always ensure session exists — handles orphan session_ids from before auth was added
                 title = req.message[:60] + ("..." if len(req.message) > 60 else "")
                 chat_store.create_session_if_not_exists(session_id, user_id, title)
                 if not is_first_message:
                     chat_store.touch_session(session_id)
-                # Save user message
                 chat_store.save_message(session_id, "user", req.message)
-                # Save AI response
                 chat_store.save_message(
                     session_id, "assistant",
                     result["response"],
@@ -94,7 +86,6 @@ async def chat(req: ChatRequest, request: Request, authorization: Optional[str] 
             processing_ms=processing_ms
         )
 
-        # Build response
         chart = None
         if result.get("chart_data"):
             cd = result["chart_data"]
@@ -132,8 +123,8 @@ async def chat(req: ChatRequest, request: Request, authorization: Optional[str] 
 async def chat_stream(req: ChatRequest, request: Request, authorization: Optional[str] = Header(None)):
     """
     Streaming SSE chat endpoint — yields real-time tool events then the final response.
-    Frontend consumes this with fetch + ReadableStream.
-    The existing /chat endpoint is untouched and still works as fallback.
+    Generator runs in a dedicated thread. Async loop sends heartbeats independently.
+    No wait_for timeouts — that caused 'generator already executing' errors.
     """
     start_time = time.time()
     store = get_session_store()
@@ -153,87 +144,101 @@ async def chat_stream(req: ChatRequest, request: Request, authorization: Optiona
     is_first_message = len(messages) == 0
 
     async def event_generator():
-        result = None
-        last_heartbeat = time.time()
+        import queue as queue_module
+        import threading
+
+        result_queue = queue_module.Queue()
+        done_event = threading.Event()
+
+        def run_generator():
+            """Run the sync generator in a background thread, push events to queue."""
+            try:
+                gen = run_agent_stream(messages, req.message, smartsheet_token=smartsheet_token)
+                for event in gen:
+                    result_queue.put(event)
+            except Exception as e:
+                result_queue.put({"type": "error", "message": str(e)})
+            finally:
+                done_event.set()
+
+        # Start generator in background thread — runs completely uninterrupted
+        thread = threading.Thread(target=run_generator, daemon=True)
+        thread.start()
+
+        heartbeat_interval = 5.0  # send heartbeat every 5 seconds of silence
 
         try:
-            loop = asyncio.get_event_loop()
-            gen = run_agent_stream(messages, req.message, smartsheet_token=smartsheet_token)
+            last_yield_time = time.time()
 
-            def next_event():
-                try:
-                    return next(gen)
-                except StopIteration:
-                    return None
+            while not done_event.is_set() or not result_queue.empty():
+                # Drain all available events from the queue
+                got_event = False
+                while not result_queue.empty():
+                    try:
+                        event = result_queue.get_nowait()
+                        got_event = True
 
-            while True:
-                # Run next generator step with a short timeout so we can send heartbeats.
-                # This prevents Render/proxy from closing the connection during long tool calls.
-                try:
-                    event = await asyncio.wait_for(
-                        loop.run_in_executor(None, next_event),
-                        timeout=8.0
-                    )
-                except asyncio.TimeoutError:
-                    # Generator is mid-computation (waiting for Claude API or Smartsheet).
-                    # Send a heartbeat comment to keep the SSE connection alive.
+                        if event["type"] == "done":
+                            result = event
+                            if user_id:
+                                try:
+                                    title = req.message[:60] + ("..." if len(req.message) > 60 else "")
+                                    chat_store.create_session_if_not_exists(session_id, user_id, title)
+                                    if not is_first_message:
+                                        chat_store.touch_session(session_id)
+                                    chat_store.save_message(session_id, "user", req.message)
+                                    chat_store.save_message(
+                                        session_id, "assistant",
+                                        result["response"],
+                                        tool_calls=result.get("tool_calls", []),
+                                        dashboard_data=result.get("dashboard_data"),
+                                        infographics=result.get("infographics", []),
+                                        followups=result.get("followups", []),
+                                        chart_data=result.get("chart_data"),
+                                    )
+                                    await store.set(session_id, result["messages"])
+                                except Exception as _e:
+                                    logger.warning("Stream: Failed to persist", error=str(_e))
+
+                            processing_ms = int((time.time() - start_time) * 1000)
+                            payload_out = {
+                                "session_id": session_id,
+                                "response": result["response"],
+                                "tool_calls": result.get("tool_calls", []),
+                                "dashboard_data": result.get("dashboard_data"),
+                                "input_form": result.get("input_form"),
+                                "infographics": result.get("infographics", []),
+                                "followups": result.get("followups", []),
+                                "needs_confirmation": result.get("needs_confirmation", False),
+                                "chart_data": result.get("chart_data"),
+                                "processing_time_ms": processing_ms,
+                            }
+                            yield f"data: {json.dumps({'type': 'done', 'payload': payload_out})}\n\n"
+                            return  # done — exit cleanly
+
+                        elif event["type"] == "error":
+                            yield f"data: {json.dumps(event)}\n\n"
+                            return
+
+                        else:
+                            # status or tool event — send immediately to frontend
+                            yield f"data: {json.dumps(event)}\n\n"
+                            last_yield_time = time.time()
+
+                    except queue_module.Empty:
+                        break
+
+                # No events right now — send heartbeat if silent too long, then wait
+                if not got_event:
                     now = time.time()
-                    if now - last_heartbeat >= 5:
+                    if now - last_yield_time >= heartbeat_interval:
                         yield ": heartbeat\n\n"
-                        last_heartbeat = now
-                    continue
-
-                # Send heartbeat on every event too if it's been a while
-                now = time.time()
-                if now - last_heartbeat >= 5:
-                    yield ": heartbeat\n\n"
-                    last_heartbeat = now
-
-                if event is None:
-                    break
-
-                if event["type"] == "done":
-                    result = event
-                    if user_id:
-                        try:
-                            title = req.message[:60] + ("..." if len(req.message) > 60 else "")
-                            chat_store.create_session_if_not_exists(session_id, user_id, title)
-                            if not is_first_message:
-                                chat_store.touch_session(session_id)
-                            chat_store.save_message(session_id, "user", req.message)
-                            chat_store.save_message(
-                                session_id, "assistant",
-                                result["response"],
-                                tool_calls=result.get("tool_calls", []),
-                                dashboard_data=result.get("dashboard_data"),
-                                infographics=result.get("infographics", []),
-                                followups=result.get("followups", []),
-                                chart_data=result.get("chart_data"),
-                            )
-                            await store.set(session_id, result["messages"])
-                        except Exception as _e:
-                            logger.warning("Stream: Failed to persist", error=str(_e))
-
-                    processing_ms = int((time.time() - start_time) * 1000)
-                    payload_out = {
-                        "session_id": session_id,
-                        "response": result["response"],
-                        "tool_calls": result.get("tool_calls", []),
-                        "dashboard_data": result.get("dashboard_data"),
-                        "input_form": result.get("input_form"),
-                        "infographics": result.get("infographics", []),
-                        "followups": result.get("followups", []),
-                        "needs_confirmation": result.get("needs_confirmation", False),
-                        "chart_data": result.get("chart_data"),
-                        "processing_time_ms": processing_ms,
-                    }
-                    yield f"data: {json.dumps({'type': 'done', 'payload': payload_out})}\n\n"
-                    break
-                else:
-                    yield f"data: {json.dumps(event)}\n\n"
+                        last_yield_time = now
+                    # Yield control to event loop so heartbeats actually flush
+                    await asyncio.sleep(0.5)
 
         except Exception as e:
-            logger.error("Stream error", error=str(e), exc_info=True)
+            logger.error("Stream generator error", error=str(e), exc_info=True)
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
     return StreamingResponse(
@@ -270,10 +275,6 @@ async def get_history(session_id: str):
 
 @router.get("/sidebar")
 async def get_sidebar_data(authorization: Optional[str] = Header(None)):
-    """
-    Fast sidebar load: workspaces list + recent sheets + dashboards.
-    Uses the logged-in user's Smartsheet token if provided.
-    """
     from utils.smartsheet_client import get_client as get_smartsheet_client, get_client_for_token
     try:
         ss_client = None
@@ -315,7 +316,6 @@ async def get_sidebar_data(authorization: Optional[str] = Header(None)):
 
 @router.get("/sessions")
 async def get_sessions(authorization: Optional[str] = Header(None)):
-    """Get all chat sessions for the logged-in user."""
     if not authorization:
         return {"sessions": []}
     token = extract_token_from_header(authorization)
@@ -330,14 +330,12 @@ async def get_sessions(authorization: Optional[str] = Header(None)):
 
 @router.get("/sessions/{session_id}/messages")
 async def get_session_messages(session_id: str, authorization: Optional[str] = Header(None)):
-    """Load all messages for a specific session."""
     messages = chat_store.get_session_messages(session_id)
     return {"messages": messages, "session_id": session_id}
 
 
 @router.patch("/sessions/{session_id}/title")
 async def rename_session(session_id: str, body: dict, authorization: Optional[str] = Header(None)):
-    """Rename a chat session."""
     title = body.get("title", "").strip()
     if not title:
         raise HTTPException(status_code=400, detail="Title required")
@@ -347,7 +345,6 @@ async def rename_session(session_id: str, body: dict, authorization: Optional[st
 
 @router.delete("/sessions/{session_id}")
 async def delete_session(session_id: str, authorization: Optional[str] = Header(None)):
-    """Delete a chat session and all its messages."""
     if not authorization:
         raise HTTPException(status_code=401, detail="Unauthorized")
     token = extract_token_from_header(authorization)
@@ -360,10 +357,6 @@ async def delete_session(session_id: str, authorization: Optional[str] = Header(
 
 @router.get("/sidebar/workspace/{workspace_id}")
 async def get_workspace_tree(workspace_id: str, authorization: Optional[str] = Header(None)):
-    """
-    Lazy-load folder/sheet tree for a specific workspace when user expands it.
-    Uses the logged-in user's Smartsheet token if provided.
-    """
     from utils.smartsheet_client import get_client as get_smartsheet_client, get_client_for_token
     try:
         ss_client = None
