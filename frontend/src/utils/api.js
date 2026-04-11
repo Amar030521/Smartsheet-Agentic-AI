@@ -39,6 +39,57 @@ export const sendMessage = async (message, sessionId, voiceInput = false) => {
   return data;
 };
 
+/**
+ * Streaming version — calls /chat/stream and yields real-time events.
+ * onEvent(event) called for each SSE event: { type: "status"|"tool"|"done"|"error" }
+ * Returns the final response payload when done.
+ */
+export const sendMessageStream = async (message, sessionId, voiceInput = false, onEvent) => {
+  const token = localStorage.getItem(TOKEN_KEY);
+  const response = await fetch(`${BACKEND_URL}/api/v1/chat/stream`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+    },
+    body: JSON.stringify({ message, session_id: sessionId, voice_input: voiceInput })
+  });
+
+  if (!response.ok) {
+    throw new Error(`Stream request failed: ${response.status}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let finalPayload = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop();
+
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        try {
+          const event = JSON.parse(line.slice(6));
+          if (event.type === 'done') {
+            finalPayload = event.payload;
+          }
+          if (onEvent) onEvent(event);
+        } catch (e) {
+          // ignore malformed lines
+        }
+      }
+    }
+  }
+
+  return finalPayload;
+};
+
 export const clearSession = async (sessionId) => {
   const { data } = await api.delete(`/session/${sessionId}`);
   return data;

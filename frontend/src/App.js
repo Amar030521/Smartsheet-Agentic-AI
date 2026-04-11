@@ -3,7 +3,7 @@ import { useAuth } from './hooks/useAuth';
 import LoginPage from './components/LoginPage';
 import AdminPanel from './components/AdminPanel';
 import { v4 as uuidv4 } from 'uuid';
-import { sendMessage, clearSession, getHealth } from './utils/api';
+import { sendMessage, sendMessageStream, clearSession, getHealth } from './utils/api';
 import { useVoiceInput } from './hooks/useVoiceInput';
 import { useDynamicSidebar } from './hooks/useDynamicSidebar';
 import { useChatSessions } from './hooks/useChatSessions';
@@ -140,41 +140,18 @@ function WorkspaceNode({ node, depth, expanded, setExpanded, onSend, loadWorkspa
 }
 
 // ── LIVE AGENT STATUS INDICATOR ─────────────────────────────────
-const AGENT_PHASES = [
-  { icon: '🔍', text: 'Connecting to Smartsheet...',        duration: 2200 },
-  { icon: '📂', text: 'Locating your workspace...',         duration: 2500 },
-  { icon: '📊', text: 'Fetching sheet data...',             duration: 3000 },
-  { icon: '🧮', text: 'Analysing rows & columns...',        duration: 3000 },
-  { icon: '🤖', text: 'Running AI analysis...',             duration: 3500 },
-  { icon: '📈', text: 'Computing metrics & patterns...',    duration: 3000 },
-  { icon: '🎯', text: 'Identifying key findings...',        duration: 3000 },
-  { icon: '✍️',  text: 'Preparing your response...',        duration: 99999 },
-];
+// Receives real events from backend SSE stream — zero fake timers.
+// events: array of { type, text, icon, display } pushed live as agent works.
+function AgentStatusIndicator({ events }) {
+  const latest = events.length > 0 ? events[events.length - 1] : null;
+  const toolCount = events.filter(e => e.type === 'tool').length;
+  // Progress grows with each real tool call, max 85% until response arrives
+  const pct = events.length === 0 ? 5 : Math.min(85, 10 + toolCount * 15);
 
-function AgentStatusIndicator() {
-  const [phaseIdx, setPhaseIdx] = React.useState(0);
-  const [visible, setVisible]  = React.useState(true);
-
-  React.useEffect(() => {
-    setPhaseIdx(0);
-    setVisible(true);
-  }, []);
-
-  React.useEffect(() => {
-    const phase = AGENT_PHASES[phaseIdx];
-    if (!phase || phaseIdx >= AGENT_PHASES.length - 1) return;
-    const advanceTimer = setTimeout(() => {
-      setVisible(false);
-      setTimeout(() => {
-        setPhaseIdx(i => Math.min(i + 1, AGENT_PHASES.length - 1));
-        setVisible(true);
-      }, 250);
-    }, phase.duration);
-    return () => clearTimeout(advanceTimer);
-  }, [phaseIdx]);
-
-  const phase = AGENT_PHASES[phaseIdx];
-  const pct   = Math.round(((phaseIdx) / (AGENT_PHASES.length - 1)) * 100);
+  const icon = latest?.icon || '🤖';
+  const text = latest?.type === 'tool'
+    ? (latest.display || latest.tool)
+    : (latest?.text || 'Connecting to Smartsheet...');
 
   return (
     <div className="msg-group">
@@ -185,20 +162,21 @@ function AgentStatusIndicator() {
             <span /><span /><span />
           </div>
           <div className="agent-status-content">
-            <div
-              className="agent-status-text"
-              style={{ opacity: visible ? 1 : 0, transition: 'opacity 0.25s ease' }}
-            >
-              <span className="agent-status-icon">{phase.icon}</span>
-              {phase.text}
+            <div className="agent-status-text">
+              <span className="agent-status-icon">{icon}</span>
+              {text}
             </div>
             <div className="agent-progress-bar">
               <div
                 className="agent-progress-fill"
-                style={{ width: `${pct}%`, transition: 'width 0.6s ease' }}
+                style={{ width: `${pct}%`, transition: 'width 0.5s ease' }}
               />
             </div>
-            <div className="agent-progress-label">{pct}% complete</div>
+            <div className="agent-progress-label">
+              {toolCount > 0
+                ? `${toolCount} tool${toolCount !== 1 ? 's' : ''} called`
+                : 'Starting...'}
+            </div>
           </div>
         </div>
       </div>
@@ -212,6 +190,7 @@ export default function App() {
   const [messages, setMessages] = useState([WELCOME_MESSAGE]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [streamEvents, setStreamEvents] = useState([]);
   const [sessionId] = useState(() => localStorage.getItem(SESSION_KEY) || uuidv4());
   const [pendingConfirmation, setPendingConfirmation] = useState(null);
   const [healthStatus, setHealthStatus] = useState('connecting');
@@ -290,6 +269,7 @@ export default function App() {
 
     setInput('');
     setIsLoading(true);
+    setStreamEvents([]);
     setPendingConfirmation(null);
 
     const userMsg = {
@@ -299,7 +279,13 @@ export default function App() {
     setMessages(prev => [...prev, userMsg]);
 
     try {
-      const res = await sendMessage(userText, sessionId, fromVoice);
+      const res = await sendMessageStream(userText, sessionId, fromVoice, (event) => {
+        if (event.type === 'status' || event.type === 'tool') {
+          setStreamEvents(prev => [...prev, event]);
+        }
+      });
+
+      if (!res) throw new Error('No response received from server');
 
       const aiMsg = {
         id: uuidv4(),
@@ -323,11 +309,12 @@ export default function App() {
     } catch (err) {
       setMessages(prev => [...prev, {
         id: uuidv4(), role: 'assistant',
-        content: `⚠️ **Error:** ${err.message}\n\nPlease check your API keys and try again.`,
+        content: `⚠️ **Error:** ${err.message}\n\nPlease check your connection and try again.`,
         tool_calls: [], chart_data: null, needs_confirmation: false
       }]);
     } finally {
       setIsLoading(false);
+      setStreamEvents([]);
       inputRef.current?.focus();
       reloadSessions();
     }
@@ -680,8 +667,8 @@ export default function App() {
               </div>
             ))}
 
-            {/* Live status indicator */}
-            {isLoading && <AgentStatusIndicator />}
+            {/* Live status indicator — driven by real backend SSE events */}
+            {isLoading && <AgentStatusIndicator events={streamEvents} />}
             <div ref={bottomRef} />
           </div>
 

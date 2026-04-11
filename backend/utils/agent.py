@@ -7,7 +7,7 @@ import sys
 import os
 import time
 import anthropic
-from typing import Optional
+from typing import Optional, Generator
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'mcp'))
 from smartsheet_mcp_server import MCP_TOOLS, execute_tool
@@ -298,6 +298,324 @@ def _call_claude_with_retry(client, model, max_tokens, system, tools, messages, 
                 raise e
 
 
+def _tool_display_name(tool_name: str) -> str:
+    display = {
+        "list_workspaces": "📁 Listing workspaces",
+        "get_workspace_contents": "📂 Loading workspace",
+        "list_sheets": "📋 Listing sheets",
+        "get_sheet": "📊 Fetching sheet data",
+        "get_sheet_by_name": "📊 Fetching sheet data",
+        "get_sheet_summary": "📊 Summarising sheet",
+        "filter_rows": "🔍 Filtering rows",
+        "aggregate_column": "📈 Computing metrics",
+        "get_project_status_summary": "🎯 Analyzing project status",
+        "get_sheet_with_links": "🔗 Resolving linked data",
+        "list_cross_sheet_references": "🔗 Listing cross-sheet references",
+        "get_linked_sheet_value": "🔗 Fetching linked value",
+        "search_sheets": "🔍 Searching sheets",
+        "find_contact_in_sheet": "👤 Finding contact",
+        "create_row": "➕ Creating row",
+        "update_row": "✏️ Updating row",
+        "delete_row": "🗑️ Deleting row",
+        "list_dashboards": "🖥️ Listing dashboards",
+        "get_dashboard": "🖥️ Loading dashboard",
+        "create_dashboard": "🆕 Creating dashboard",
+        "add_widget_to_dashboard": "🖥️ Adding widget",
+        "list_automations": "⚙️ Listing automations",
+        "create_automation": "⚙️ Creating automation",
+        "update_automation": "⚙️ Updating automation",
+        "delete_automation": "⚙️ Deleting automation",
+        "list_scc_programs": "🎯 Loading SCC programs",
+        "list_blueprints": "📐 Fetching blueprints",
+        "rollout_project": "🚀 Rolling out project",
+        "list_scc_projects": "📌 Listing SCC projects",
+        "create_webhook": "🔔 Creating webhook",
+        "list_webhooks": "🔔 Listing webhooks",
+        "send_row_email": "📧 Sending email",
+        "request_row_update": "📧 Requesting update",
+    }
+    return display.get(tool_name, f"⚙️ {tool_name.replace('_', ' ').title()}")
+
+
+def run_agent_stream(messages: list, user_message: str, smartsheet_token: str = None) -> Generator[dict, None, None]:
+    """
+    Streaming version of run_agent — yields real-time status events as the agent works.
+    Yields dicts: { "type": "status"|"tool"|"done"|"error", ...fields }
+    The final "done" event contains the full result identical to run_agent().
+    The existing run_agent() is completely untouched.
+    """
+    from datetime import date, timedelta
+    today = date.today()
+    tomorrow = today + timedelta(days=1)
+    yesterday = today - timedelta(days=1)
+
+    date_context = f"""
+
+CURRENT DATE CONTEXT (use these exact values — never guess):
+- Today: {today.strftime('%Y-%m-%d')} ({today.strftime('%A, %d %B %Y')})
+- Tomorrow: {tomorrow.strftime('%Y-%m-%d')}
+- Yesterday: {yesterday.strftime('%Y-%m-%d')}
+- Current month: {today.strftime('%B %Y')}
+- Current year: {today.year}
+When user says "today", "tomorrow", "yesterday", "this week", "next week" — use these exact dates."""
+
+    dynamic_system = SYSTEM_PROMPT + date_context
+    client = get_anthropic_client()
+    messages.append({"role": "user", "content": user_message})
+
+    # History trimming — identical logic to run_agent
+    MAX_PAIRS = 10
+    if len(messages) > MAX_PAIRS * 2:
+        trimmed = messages[-(MAX_PAIRS * 2):]
+        start = 0
+        for i, msg in enumerate(trimmed):
+            if msg.get("role") == "user":
+                content = msg.get("content", "")
+                if isinstance(content, str):
+                    start = i
+                    break
+        messages = trimmed[start:]
+
+    _DATA_TOOLS = {"get_sheet_summary", "filter_rows", "aggregate_column",
+                   "get_project_status_summary", "get_sheet", "get_sheet_by_name",
+                   "get_sheet_with_links", "find_contact_in_sheet"}
+
+    for msg in messages:
+        if msg.get("role") == "user" and isinstance(msg.get("content"), list):
+            for block in msg["content"]:
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    cs = block.get("content", "")
+                    _tid = block.get("tool_use_id", "")
+                    _tname = ""
+                    for _msg in messages:
+                        if isinstance(_msg.get("content"), list):
+                            for _b in _msg["content"]:
+                                if isinstance(_b, dict) and _b.get("type") == "tool_use" and _b.get("id") == _tid:
+                                    _tname = _b.get("name", "")
+                    _trunc_limit = 4000 if _tname in _DATA_TOOLS else 1500
+                    if isinstance(cs, str) and len(cs) > _trunc_limit:
+                        block["content"] = cs[:_trunc_limit] + "...[truncated for token efficiency]"
+
+    tool_calls_made = []
+    chart_data = None
+    needs_confirmation = False
+    final_text = ""
+    iteration = 0
+    max_iterations = 8
+
+    yield {"type": "status", "text": "Thinking...", "icon": "🤖"}
+
+    try:
+        while iteration < max_iterations:
+            iteration += 1
+
+            yield {"type": "status", "text": "Calling AI model...", "icon": "🤖"}
+
+            response = _call_claude_with_retry(
+                client=client,
+                model=settings.claude_model,
+                max_tokens=settings.claude_max_tokens,
+                system=dynamic_system,
+                tools=MCP_TOOLS,
+                messages=messages
+            )
+
+            text_blocks = [b for b in response.content if b.type == "text"]
+            tool_blocks = [b for b in response.content if b.type == "tool_use"]
+
+            messages.append({
+                "role": "assistant",
+                "content": _serialize_content(response.content)
+            })
+
+            if response.stop_reason == "end_turn" or not tool_blocks:
+                final_text = "\n".join(b.text for b in text_blocks)
+                yield {"type": "status", "text": "Preparing response...", "icon": "✍️"}
+
+                if "FOLLOWUPS::" not in final_text and final_text.strip():
+                    is_deep = "###" in final_text or len(final_text) > 2000
+                    is_table = "|---|" in final_text or "| --- |" in final_text
+                    if is_deep and not is_table:
+                        final_text = final_text.rstrip() + '\nFOLLOWUPS::["Show this analysis as a dashboard","Deep dive into the highest risk finding","Send escalation to relevant stakeholders"]'
+                    elif is_table:
+                        final_text = final_text.rstrip() + '\nFOLLOWUPS::["Filter to items with bottlenecks only","Provision the approved but undeployed projects","Send update requests to stuck PMs"]'
+                    else:
+                        final_text = final_text.rstrip() + '\nFOLLOWUPS::["Show this as a dashboard","Filter to critical items only","Send update requests to delayed PMs"]'
+                break
+
+            tool_results = []
+            for tb in tool_blocks:
+                tool_name = tb.name
+                tool_input = tb.input
+                display = _tool_display_name(tool_name)
+
+                # Emit real tool event — frontend shows this live as it happens
+                yield {"type": "tool", "tool": tool_name, "display": display, "icon": display.split()[0] if display else "⚙️"}
+
+                tool_calls_made.append({"tool": tool_name, "input": tool_input, "display": display})
+                result = execute_tool(tool_name, tool_input, smartsheet_token=smartsheet_token)
+
+                if isinstance(result, dict) and "chart_data" in result and not chart_data:
+                    chart_data = result["chart_data"]
+
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": tb.id,
+                    "content": json.dumps(result, default=str)
+                })
+
+            messages.append({"role": "user", "content": tool_results})
+
+        # Fallback if loop exhausted with no final text
+        if not final_text.strip():
+            for msg in reversed(messages):
+                if msg.get("role") == "assistant":
+                    content_blocks = msg.get("content", [])
+                    if isinstance(content_blocks, list):
+                        texts = [b.get("text", "") for b in content_blocks if isinstance(b, dict) and b.get("type") == "text"]
+                        if texts:
+                            final_text = "\n".join(t for t in texts if t)
+                            break
+            if not final_text.strip():
+                tool_names = [t["display"] for t in tool_calls_made]
+                final_text = f"I ran {len(tool_calls_made)} operations ({', '.join(tool_names)}) but couldn't complete the response. Please try again."
+
+        # Parse CHART::
+        if "CHART::" in final_text:
+            try:
+                chart_start = final_text.index("CHART::") + 7
+                brace_count = 0
+                chart_end = chart_start
+                for i, c in enumerate(final_text[chart_start:], chart_start):
+                    if c == "{": brace_count += 1
+                    elif c == "}":
+                        brace_count -= 1
+                        if brace_count == 0: chart_end = i + 1; break
+                raw_chart = json.loads(final_text[chart_start:chart_end])
+                if "datasets" in raw_chart and "values" not in raw_chart:
+                    raw_chart["values"] = raw_chart["datasets"][0].get("values", [])
+                chart_data = raw_chart
+                final_text = (final_text[:final_text.index("CHART::")] + final_text[chart_end:]).strip()
+            except Exception:
+                try: final_text = final_text[:final_text.index("CHART::")].strip()
+                except Exception: pass
+
+        # Parse DASHBOARD::
+        dashboard_data = None
+        if "DASHBOARD::" in final_text:
+            try:
+                db_idx = final_text.index("DASHBOARD::")
+                obj_start = final_text.index("{", db_idx + 11)
+                brace_count = 0
+                obj_end = obj_start
+                for i, c in enumerate(final_text[obj_start:], obj_start):
+                    if c == "{": brace_count += 1
+                    elif c == "}":
+                        brace_count -= 1
+                        if brace_count == 0: obj_end = i + 1; break
+                dashboard_data = json.loads(final_text[obj_start:obj_end])
+                final_text = (final_text[:db_idx] + final_text[obj_end:]).strip()
+            except Exception:
+                try: final_text = final_text[:final_text.index("DASHBOARD::")].strip()
+                except Exception: pass
+
+        # Scrub IDs and emails
+        final_text = re.sub(r'\b\d{10,}\b', '[ID]', final_text)
+        final_text = re.sub(r'\(?\s*(?:sheet[_\s]?id|workspace[_\s]?id|folder[_\s]?id|row[_\s]?id|id)\s*[:\-]?\s*\[ID\]\s*\)?', '', final_text, flags=re.IGNORECASE)
+        final_text = re.sub(r'^\s*\[ID\]\s*$', '', final_text, flags=re.MULTILINE)
+        final_text = re.sub(r'(?<=assigned to )\s*[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}', 'PM', final_text)
+        final_text = re.sub(r'(?<=Owner:\s)[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}', 'PM', final_text)
+        final_text = re.sub(r'(?<=PM\s)[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}', '', final_text)
+        final_text = re.sub(r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}', '[contact]', final_text)
+        final_text = re.sub(r'\(\s*\)', '', final_text)
+        final_text = re.sub(r'\n{3,}', '\n\n', final_text).strip()
+
+        # Parse INFOGRAPHIC::
+        infographics = []
+        _ig_positions = []
+        _search_pos = 0
+        while True:
+            _tag_idx = final_text.find('INFOGRAPHIC::', _search_pos)
+            if _tag_idx == -1: break
+            _brace_idx = final_text.find('{', _tag_idx)
+            if _brace_idx == -1: break
+            _depth = 0
+            _end_idx = _brace_idx
+            for _ci, _ch in enumerate(final_text[_brace_idx:], _brace_idx):
+                if _ch == '{': _depth += 1
+                elif _ch == '}':
+                    _depth -= 1
+                    if _depth == 0: _end_idx = _ci + 1; break
+            _json_str = final_text[_brace_idx:_end_idx]
+            try:
+                _ig = json.loads(_json_str)
+                infographics.append(_ig)
+                _ig_positions.append((_tag_idx, _end_idx))
+            except Exception: pass
+            _search_pos = _end_idx
+        for _start, _end in reversed(_ig_positions):
+            final_text = (final_text[:_start] + final_text[_end:]).strip()
+        final_text = re.sub(r'^,\s*\{[^}]*\}', '', final_text, flags=re.MULTILINE).strip()
+
+        # Parse FORM::
+        input_form = None
+        if "FORM::" in final_text:
+            try:
+                fm_idx = final_text.index("FORM::")
+                obj_start = final_text.index("{", fm_idx)
+                brace_count = 0
+                obj_end = obj_start
+                for i, c in enumerate(final_text[obj_start:], obj_start):
+                    if c == "{": brace_count += 1
+                    elif c == "}":
+                        brace_count -= 1
+                        if brace_count == 0: obj_end = i + 1; break
+                input_form = json.loads(final_text[obj_start:obj_end])
+                final_text = (final_text[:fm_idx] + final_text[obj_end:]).strip()
+            except Exception:
+                try: final_text = final_text[:final_text.index("FORM::")].strip()
+                except Exception: pass
+
+        # Parse FOLLOWUPS::
+        followups = []
+        if "FOLLOWUPS::" in final_text:
+            try:
+                fu_idx = final_text.index("FOLLOWUPS::")
+                fu_start = fu_idx + 11
+                while fu_start < len(final_text) and final_text[fu_start] in (' ', '\t'):
+                    fu_start += 1
+                fu_end = final_text.index("]", fu_start) + 1
+                raw = final_text[fu_start:fu_end].replace("'", '"')
+                followups = json.loads(raw)
+                if not isinstance(followups, list): followups = []
+                final_text = (final_text[:fu_idx] + final_text[fu_end:]).strip()
+            except Exception:
+                try: final_text = final_text[:final_text.index("FOLLOWUPS::")].strip()
+                except Exception: pass
+
+        if "CONFIRM_REQUIRED" in final_text:
+            needs_confirmation = True
+            final_text = final_text.replace("CONFIRM_REQUIRED", "").strip()
+
+        # Yield the final complete result — frontend receives this as the response
+        yield {
+            "type": "done",
+            "response": final_text,
+            "chart_data": chart_data,
+            "dashboard_data": dashboard_data,
+            "input_form": input_form,
+            "infographics": infographics,
+            "tool_calls": tool_calls_made,
+            "needs_confirmation": needs_confirmation,
+            "followups": followups,
+            "messages": messages,
+        }
+
+    except Exception as e:
+        logger.error("Stream agent error", error=str(e), exc_info=True)
+        yield {"type": "error", "message": str(e)}
+
+
 async def run_agent(messages: list, user_message: str, smartsheet_token: str = None) -> dict:
     """Main agentic loop with retry handling."""
     from datetime import date, timedelta
@@ -328,7 +646,6 @@ When user says "today", "tomorrow", "yesterday", "this week", "next week" — us
     if len(messages) > MAX_PAIRS * 2:
         trimmed = messages[-(MAX_PAIRS * 2):]
         # Find first clean user message (not a tool_result block)
-        # A tool_result user message has content as a list with type=tool_result
         start = 0
         for i, msg in enumerate(trimmed):
             if msg.get("role") == "user":
@@ -341,9 +658,9 @@ When user says "today", "tomorrow", "yesterday", "this week", "next week" — us
         messages = trimmed[start:]
 
     # Truncate large tool results in history to save tokens
-    _DATA_TOOLS = {"get_sheet_summary","filter_rows","aggregate_column",
-                   "get_project_status_summary","get_sheet","get_sheet_by_name",
-                   "get_sheet_with_links","find_contact_in_sheet"}
+    _DATA_TOOLS = {"get_sheet_summary", "filter_rows", "aggregate_column",
+                   "get_project_status_summary", "get_sheet", "get_sheet_by_name",
+                   "get_sheet_with_links", "find_contact_in_sheet"}
 
     for msg in messages:
         if msg.get("role") == "user" and isinstance(msg.get("content"), list):
@@ -441,7 +758,7 @@ When user says "today", "tomorrow", "yesterday", "this week", "next week" — us
             if msg.get("role") == "assistant":
                 content_blocks = msg.get("content", [])
                 if isinstance(content_blocks, list):
-                    texts = [b.get("text","") for b in content_blocks if isinstance(b,dict) and b.get("type")=="text"]
+                    texts = [b.get("text", "") for b in content_blocks if isinstance(b, dict) and b.get("type") == "text"]
                     if texts:
                         final_text = "\n".join(t for t in texts if t)
                         break
@@ -502,7 +819,7 @@ When user says "today", "tomorrow", "yesterday", "this week", "next week" — us
             dashboard_data = json.loads(raw_json)
             # Remove DASHBOARD:: block from displayed text
             final_text = (final_text[:db_idx] + final_text[obj_end:]).strip()
-            logger.info("Dashboard parsed", panels=len(dashboard_data.get("panels",[])), kpis=len(dashboard_data.get("kpis",[])))
+            logger.info("Dashboard parsed", panels=len(dashboard_data.get("panels", [])), kpis=len(dashboard_data.get("kpis", [])))
         except Exception as e:
             logger.warning("Dashboard parse failed", error=str(e), snippet=final_text[final_text.find("DASHBOARD::"):][:100] if "DASHBOARD::" in final_text else "")
             try:
@@ -513,12 +830,11 @@ When user says "today", "tomorrow", "yesterday", "this week", "next week" — us
     # Scrub raw IDs and emails from response text — never show to user
     # Remove standalone large integers (Smartsheet IDs are 10-19 digits)
     final_text = re.sub(r'\b\d{10,}\b', '[ID]', final_text)
-    # Clean up "id: [ID]", "Sheet ID: [ID]" patterns  
+    # Clean up "id: [ID]", "Sheet ID: [ID]" patterns
     final_text = re.sub(r'\(?\s*(?:sheet[_\s]?id|workspace[_\s]?id|folder[_\s]?id|row[_\s]?id|id)\s*[:\-]?\s*\[ID\]\s*\)?', '', final_text, flags=re.IGNORECASE)
     # Remove lines that are only "[ID]"
     final_text = re.sub(r'^\s*\[ID\]\s*$', '', final_text, flags=re.MULTILINE)
     # Scrub email addresses — remove them cleanly
-    # "assigned to email" → "assigned to PM", "Owner: email" → "Owner: PM"
     final_text = re.sub(r'(?<=assigned to )\s*[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}', 'PM', final_text)
     final_text = re.sub(r'(?<=Owner:\s)[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}', 'PM', final_text)
     final_text = re.sub(r'(?<=PM\s)[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}', '', final_text)
@@ -529,7 +845,7 @@ When user says "today", "tomorrow", "yesterday", "this week", "next week" — us
     # Collapse multiple blank lines
     final_text = re.sub(r'\n{3,}', '\n\n', final_text).strip()
 
-        # Parse INFOGRAPHIC:: blocks — brace-counting for reliable nested JSON
+    # Parse INFOGRAPHIC:: blocks — brace-counting for reliable nested JSON
     infographics = []
     _ig_positions = []  # track (start, end) of full INFOGRAPHIC::{ ... } spans
     _search_pos = 0
@@ -578,7 +894,7 @@ When user says "today", "tomorrow", "yesterday", "this week", "next week" — us
                         break
             input_form = json.loads(final_text[obj_start:obj_end])
             final_text = (final_text[:fm_idx] + final_text[obj_end:]).strip()
-            logger.info("Form parsed", title=input_form.get("title",""), fields=len(input_form.get("fields",[])))
+            logger.info("Form parsed", title=input_form.get("title", ""), fields=len(input_form.get("fields", [])))
         except Exception as e:
             logger.warning("Form parse failed", error=str(e))
             try:
@@ -628,27 +944,3 @@ When user says "today", "tomorrow", "yesterday", "this week", "next week" — us
         "messages": messages,
         "iterations": iteration
     }
-
-
-def _tool_display_name(tool_name: str) -> str:
-    display = {
-        "list_workspaces": "📁 Listing workspaces",
-        "get_workspace_contents": "📂 Loading workspace",
-        "list_sheets": "📋 Listing sheets",
-        "get_sheet": "📊 Fetching sheet data",
-        "filter_rows": "🔍 Filtering rows",
-        "aggregate_column": "📈 Computing metrics",
-        "get_project_status_summary": "🎯 Analyzing project status",
-        "create_row": "➕ Creating row",
-        "update_row": "✏️ Updating row",
-        "delete_row": "🗑️ Deleting row",
-        "list_dashboards": "🖥️ Listing dashboards",
-        "get_dashboard": "🖥️ Loading dashboard",
-        "create_dashboard": "🆕 Creating dashboard",
-        "list_scc_programs": "🎯 Loading SCC programs",
-        "list_blueprints": "📐 Fetching blueprints",
-        "rollout_project": "🚀 Rolling out project",
-        "list_scc_projects": "📌 Listing SCC projects",
-        "search_sheets": "🔍 Searching"
-    }
-    return display.get(tool_name, f"⚙️ {tool_name.replace('_', ' ').title()}")
