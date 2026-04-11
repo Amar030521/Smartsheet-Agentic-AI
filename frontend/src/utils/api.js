@@ -41,53 +41,81 @@ export const sendMessage = async (message, sessionId, voiceInput = false) => {
 
 /**
  * Streaming version — calls /chat/stream and yields real-time events.
- * onEvent(event) called for each SSE event: { type: "status"|"tool"|"done"|"error" }
- * Returns the final response payload when done.
+ * onEvent(event) is called for each SSE event: { type: "status"|"tool"|"done"|"error" }
+ * Falls back to regular /chat endpoint if stream fails or returns null.
  */
 export const sendMessageStream = async (message, sessionId, voiceInput = false, onEvent) => {
   const token = localStorage.getItem(TOKEN_KEY);
-  const response = await fetch(`${BACKEND_URL}/api/v1/chat/stream`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-    },
-    body: JSON.stringify({ message, session_id: sessionId, voice_input: voiceInput })
-  });
 
-  if (!response.ok) {
-    throw new Error(`Stream request failed: ${response.status}`);
-  }
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/v1/chat/stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      },
+      body: JSON.stringify({ message, session_id: sessionId, voice_input: voiceInput })
+    });
 
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let finalPayload = null;
+    if (!response.ok) {
+      throw new Error(`Stream request failed: ${response.status}`);
+    }
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let finalPayload = null;
 
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    for (const line of lines) {
-      if (line.startsWith('data: ')) {
-        try {
-          const event = JSON.parse(line.slice(6));
-          if (event.type === 'done') {
-            finalPayload = event.payload;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const event = JSON.parse(line.slice(6));
+            if (event.type === 'done') {
+              finalPayload = event.payload;
+            }
+            if (onEvent) onEvent(event);
+          } catch (e) {
+            // ignore malformed lines
           }
-          if (onEvent) onEvent(event);
-        } catch (e) {
-          // ignore malformed lines
         }
+        // heartbeat lines (": heartbeat") are ignored automatically
       }
     }
-  }
 
-  return finalPayload;
+    // If stream completed but no done event received (connection dropped mid-stream),
+    // fall back to the regular /chat endpoint to get the response
+    if (!finalPayload) {
+      console.warn('Stream ended without done event — falling back to /chat');
+      if (onEvent) onEvent({ type: 'status', text: 'Finalising response...', icon: '✍️' });
+      const { data } = await api.post('/chat', {
+        message,
+        session_id: sessionId,
+        voice_input: voiceInput
+      });
+      return data;
+    }
+
+    return finalPayload;
+
+  } catch (err) {
+    // Stream failed entirely — fall back to regular /chat
+    console.warn('Stream failed, falling back to /chat:', err.message);
+    if (onEvent) onEvent({ type: 'status', text: 'Reconnecting...', icon: '🔄' });
+    const { data } = await api.post('/chat', {
+      message,
+      session_id: sessionId,
+      voice_input: voiceInput
+    });
+    return data;
+  }
 };
 
 export const clearSession = async (sessionId) => {
