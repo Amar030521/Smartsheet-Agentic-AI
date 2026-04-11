@@ -28,28 +28,79 @@ def get_anthropic_client() -> anthropic.Anthropic:
     return _anthropic_client
 
 
-# Shorter system prompt to reduce token usage
 SYSTEM_PROMPT = """You are a Chief Portfolio Intelligence Officer embedded in Smartsheet. You advise founders and directors. You have three modes — detect from query intent automatically.
 
 TODAY: {today}
 
 ═══════════════════════════════════════
-THREE MODES — DETECT FROM QUERY INTENT
+STEP 0 — DETECT USER CONTEXT FIRST
+═══════════════════════════════════════
+Before doing anything else, determine WHERE the user is and WHAT SCOPE they are asking about.
+This controls which tools you call and what you include in the response.
+
+CONTEXT LEVEL 1 — GLOBAL (no workspace mentioned, no prior context in conversation)
+Signals: "give me a summary", "what do I have", "overview of everything", "what's going on"
+→ call list_workspaces → for each workspace call get_workspace_contents(shallow=True) → for each workspace call get_sheet_summary on its most important sheets
+→ Summarise ACROSS all workspaces: what each workspace is for, key activity, headline numbers
+
+CONTEXT LEVEL 2 — INSIDE A SPECIFIC WORKSPACE
+Signals: workspace name or ID in message OR user just navigated into a workspace in the conversation
+Examples: "give me summary of Professional Certificate workspace", "what's in this workspace", "summarise this workspace"
+→ call get_workspace_contents(shallow=False) to get full folder/sheet tree
+→ call get_folder_contents for each folder inside the workspace
+→ call get_sheet_summary on EVERY sheet found — read the actual data
+→ Summarise ONLY that workspace: what each folder/project is doing, statuses, key numbers, what is actually happening inside
+
+CONTEXT LEVEL 3 — INSIDE A PROJECT/FOLDER
+Signals: folder name, project name, or folder_id mentioned OR user is in a folder context from the conversation
+Examples: "give me summary of BP folder", "what's happening in this project", "summarise this project"
+→ call get_folder_contents(folder_id) to get all sheets in that folder
+→ call get_sheet_summary on EVERY sheet in the folder — read actual data, not just names
+→ call get_sheet_with_links if any sheet has cross-sheet references — resolve and include linked data
+→ Summarise ONLY that folder/project: what each sheet tracks, current statuses, key findings from actual row data
+
+CONTEXT LEVEL 4 — INSIDE A SPECIFIC SHEET
+Signals: sheet name or sheet_id mentioned, or "this sheet", "this tracker", "this report"
+Examples: "summarise this sheet", "what's in the budget tracker", "give me summary of Rubric Sheet"
+→ call get_sheet_summary(sheet_id) for analytical data
+→ call get_sheet(sheet_id) if you need full row detail for the summary
+→ call list_cross_sheet_references to find and resolve linked data
+→ call get_sheet_with_links if cross-sheet links exist
+→ Summarise ONLY that sheet: purpose of the sheet, what it tracks, current values, key patterns, what the data is telling you
+
+CRITICAL SCOPING RULES:
+- NEVER include data from outside the user's current context
+- If user says "this workspace" — only that workspace, nothing else
+- If user says "this project" or "this folder" — only sheets inside that folder
+- If user says "this sheet" — only that sheet
+- If context is ambiguous — ask one clarifying question: "Are you asking about [workspace name] specifically, or everything?"
+- ALWAYS read actual sheet content (get_sheet_summary at minimum) — never give a summary based on names/counts alone
+- Cross-sheet references must be resolved — call get_sheet_with_links and list_cross_sheet_references when sheets link to other sheets
+
+═══════════════════════════════════════
+THREE RESPONSE MODES — DETECT FROM QUERY
 ═══════════════════════════════════════
 
-MODE 1 — EXECUTIVE BRIEF (default)
-Triggers: "status", "portfolio", "what is", "how many", "which projects", "overdue", "summary", "quick", "show me the status"
+MODE 1 — EXECUTIVE BRIEF (default for summary queries)
+Triggers: "status", "portfolio", "what is", "how many", "which projects", "overdue", "summary", "quick", "show me the status", "give me a summary", "overview", "what's going on"
 
 Structure:
-**🔴/🟡/🟢 [Headline — single most critical finding, quantified]**
-- [Finding 1: number + business impact]
-- [Finding 2: number + business impact]
-- [Finding 3: pattern or concentration]
+**🔴/🟡/🟢 [Headline — single most critical finding from the actual data, quantified]**
+- [Finding 1: what this workspace/project/sheet is actually doing + key number]
+- [Finding 2: status or health finding with metric]
+- [Finding 3: pattern, risk, or concentration]
 - [What is working — if data shows it]
 - [Recommended immediate action]
 [Max 5 bullets. No paragraphs. No sub-headers.]
 DASHBOARD::{{...}}
 FOLLOWUPS::["<specific action>","<specific drill-down>","<specific action>"]
+
+For SUMMARY queries specifically — the response must answer:
+- What is this workspace/project/sheet actually ABOUT (purpose, domain)
+- What is currently HAPPENING (statuses, active work, counts)
+- What are the KEY NUMBERS (budget, timelines, completion %)
+- What needs ATTENTION (risks, delays, blockers)
+Do NOT just list file/sheet names. Read the data and explain what the work actually IS.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -298,51 +349,12 @@ def _call_claude_with_retry(client, model, max_tokens, system, tools, messages, 
                 raise e
 
 
-def _tool_display_name(tool_name: str) -> str:
-    display = {
-        "list_workspaces": "📁 Listing workspaces",
-        "get_workspace_contents": "📂 Loading workspace",
-        "list_sheets": "📋 Listing sheets",
-        "get_sheet": "📊 Fetching sheet data",
-        "get_sheet_by_name": "📊 Fetching sheet data",
-        "get_sheet_summary": "📊 Summarising sheet",
-        "filter_rows": "🔍 Filtering rows",
-        "aggregate_column": "📈 Computing metrics",
-        "get_project_status_summary": "🎯 Analyzing project status",
-        "get_sheet_with_links": "🔗 Resolving linked data",
-        "list_cross_sheet_references": "🔗 Listing cross-sheet references",
-        "get_linked_sheet_value": "🔗 Fetching linked value",
-        "search_sheets": "🔍 Searching sheets",
-        "find_contact_in_sheet": "👤 Finding contact",
-        "create_row": "➕ Creating row",
-        "update_row": "✏️ Updating row",
-        "delete_row": "🗑️ Deleting row",
-        "list_dashboards": "🖥️ Listing dashboards",
-        "get_dashboard": "🖥️ Loading dashboard",
-        "create_dashboard": "🆕 Creating dashboard",
-        "add_widget_to_dashboard": "🖥️ Adding widget",
-        "list_automations": "⚙️ Listing automations",
-        "create_automation": "⚙️ Creating automation",
-        "update_automation": "⚙️ Updating automation",
-        "delete_automation": "⚙️ Deleting automation",
-        "list_scc_programs": "🎯 Loading SCC programs",
-        "list_blueprints": "📐 Fetching blueprints",
-        "rollout_project": "🚀 Rolling out project",
-        "list_scc_projects": "📌 Listing SCC projects",
-        "create_webhook": "🔔 Creating webhook",
-        "list_webhooks": "🔔 Listing webhooks",
-        "send_row_email": "📧 Sending email",
-        "request_row_update": "📧 Requesting update",
-    }
-    return display.get(tool_name, f"⚙️ {tool_name.replace('_', ' ').title()}")
-
-
 def run_agent_stream(messages: list, user_message: str, smartsheet_token: str = None) -> Generator[dict, None, None]:
     """
     Streaming version of run_agent — yields real-time status events as the agent works.
     Yields dicts: { "type": "status"|"tool"|"done"|"error", ...fields }
     The final "done" event contains the full result identical to run_agent().
-    The existing run_agent() is completely untouched.
+    The existing run_agent() is untouched — this is additive only.
     """
     from datetime import date, timedelta
     today = date.today()
@@ -363,7 +375,7 @@ When user says "today", "tomorrow", "yesterday", "this week", "next week" — us
     client = get_anthropic_client()
     messages.append({"role": "user", "content": user_message})
 
-    # History trimming — identical logic to run_agent
+    # History trimming — same logic as run_agent
     MAX_PAIRS = 10
     if len(messages) > MAX_PAIRS * 2:
         trimmed = messages[-(MAX_PAIRS * 2):]
@@ -376,9 +388,9 @@ When user says "today", "tomorrow", "yesterday", "this week", "next week" — us
                     break
         messages = trimmed[start:]
 
-    _DATA_TOOLS = {"get_sheet_summary", "filter_rows", "aggregate_column",
-                   "get_project_status_summary", "get_sheet", "get_sheet_by_name",
-                   "get_sheet_with_links", "find_contact_in_sheet"}
+    _DATA_TOOLS = {"get_sheet_summary","filter_rows","aggregate_column",
+                   "get_project_status_summary","get_sheet","get_sheet_by_name",
+                   "get_sheet_with_links","find_contact_in_sheet"}
 
     for msg in messages:
         if msg.get("role") == "user" and isinstance(msg.get("content"), list):
@@ -449,7 +461,7 @@ When user says "today", "tomorrow", "yesterday", "this week", "next week" — us
                 tool_input = tb.input
                 display = _tool_display_name(tool_name)
 
-                # Emit real tool event — frontend shows this live as it happens
+                # Emit real tool event — this is what shows on the frontend
                 yield {"type": "tool", "tool": tool_name, "display": display, "icon": display.split()[0] if display else "⚙️"}
 
                 tool_calls_made.append({"tool": tool_name, "input": tool_input, "display": display})
@@ -466,13 +478,13 @@ When user says "today", "tomorrow", "yesterday", "this week", "next week" — us
 
             messages.append({"role": "user", "content": tool_results})
 
-        # Fallback if loop exhausted with no final text
+        # Fallback if loop exhausted
         if not final_text.strip():
             for msg in reversed(messages):
                 if msg.get("role") == "assistant":
                     content_blocks = msg.get("content", [])
                     if isinstance(content_blocks, list):
-                        texts = [b.get("text", "") for b in content_blocks if isinstance(b, dict) and b.get("type") == "text"]
+                        texts = [b.get("text","") for b in content_blocks if isinstance(b,dict) and b.get("type")=="text"]
                         if texts:
                             final_text = "\n".join(t for t in texts if t)
                             break
@@ -597,7 +609,7 @@ When user says "today", "tomorrow", "yesterday", "this week", "next week" — us
             needs_confirmation = True
             final_text = final_text.replace("CONFIRM_REQUIRED", "").strip()
 
-        # Yield the final complete result — frontend receives this as the response
+        # Emit the final complete result
         yield {
             "type": "done",
             "response": final_text,
@@ -658,9 +670,9 @@ When user says "today", "tomorrow", "yesterday", "this week", "next week" — us
         messages = trimmed[start:]
 
     # Truncate large tool results in history to save tokens
-    _DATA_TOOLS = {"get_sheet_summary", "filter_rows", "aggregate_column",
-                   "get_project_status_summary", "get_sheet", "get_sheet_by_name",
-                   "get_sheet_with_links", "find_contact_in_sheet"}
+    _DATA_TOOLS = {"get_sheet_summary","filter_rows","aggregate_column",
+                   "get_project_status_summary","get_sheet","get_sheet_by_name",
+                   "get_sheet_with_links","find_contact_in_sheet"}
 
     for msg in messages:
         if msg.get("role") == "user" and isinstance(msg.get("content"), list):
@@ -758,7 +770,7 @@ When user says "today", "tomorrow", "yesterday", "this week", "next week" — us
             if msg.get("role") == "assistant":
                 content_blocks = msg.get("content", [])
                 if isinstance(content_blocks, list):
-                    texts = [b.get("text", "") for b in content_blocks if isinstance(b, dict) and b.get("type") == "text"]
+                    texts = [b.get("text","") for b in content_blocks if isinstance(b,dict) and b.get("type")=="text"]
                     if texts:
                         final_text = "\n".join(t for t in texts if t)
                         break
@@ -819,7 +831,7 @@ When user says "today", "tomorrow", "yesterday", "this week", "next week" — us
             dashboard_data = json.loads(raw_json)
             # Remove DASHBOARD:: block from displayed text
             final_text = (final_text[:db_idx] + final_text[obj_end:]).strip()
-            logger.info("Dashboard parsed", panels=len(dashboard_data.get("panels", [])), kpis=len(dashboard_data.get("kpis", [])))
+            logger.info("Dashboard parsed", panels=len(dashboard_data.get("panels",[])), kpis=len(dashboard_data.get("kpis",[])))
         except Exception as e:
             logger.warning("Dashboard parse failed", error=str(e), snippet=final_text[final_text.find("DASHBOARD::"):][:100] if "DASHBOARD::" in final_text else "")
             try:
@@ -894,7 +906,7 @@ When user says "today", "tomorrow", "yesterday", "this week", "next week" — us
                         break
             input_form = json.loads(final_text[obj_start:obj_end])
             final_text = (final_text[:fm_idx] + final_text[obj_end:]).strip()
-            logger.info("Form parsed", title=input_form.get("title", ""), fields=len(input_form.get("fields", [])))
+            logger.info("Form parsed", title=input_form.get("title",""), fields=len(input_form.get("fields",[])))
         except Exception as e:
             logger.warning("Form parse failed", error=str(e))
             try:
@@ -944,3 +956,42 @@ When user says "today", "tomorrow", "yesterday", "this week", "next week" — us
         "messages": messages,
         "iterations": iteration
     }
+
+
+def _tool_display_name(tool_name: str) -> str:
+    display = {
+        "list_workspaces": "📁 Listing workspaces",
+        "get_workspace_contents": "📂 Loading workspace",
+        "list_sheets": "📋 Listing sheets",
+        "get_sheet": "📊 Fetching sheet data",
+        "get_sheet_by_name": "📊 Fetching sheet data",
+        "get_sheet_summary": "📊 Summarising sheet",
+        "filter_rows": "🔍 Filtering rows",
+        "aggregate_column": "📈 Computing metrics",
+        "get_project_status_summary": "🎯 Analyzing project status",
+        "get_sheet_with_links": "🔗 Resolving linked data",
+        "list_cross_sheet_references": "🔗 Listing cross-sheet references",
+        "get_linked_sheet_value": "🔗 Fetching linked value",
+        "search_sheets": "🔍 Searching sheets",
+        "find_contact_in_sheet": "👤 Finding contact",
+        "create_row": "➕ Creating row",
+        "update_row": "✏️ Updating row",
+        "delete_row": "🗑️ Deleting row",
+        "list_dashboards": "🖥️ Listing dashboards",
+        "get_dashboard": "🖥️ Loading dashboard",
+        "create_dashboard": "🆕 Creating dashboard",
+        "add_widget_to_dashboard": "🖥️ Adding widget",
+        "list_automations": "⚙️ Listing automations",
+        "create_automation": "⚙️ Creating automation",
+        "update_automation": "⚙️ Updating automation",
+        "delete_automation": "⚙️ Deleting automation",
+        "list_scc_programs": "🎯 Loading SCC programs",
+        "list_blueprints": "📐 Fetching blueprints",
+        "rollout_project": "🚀 Rolling out project",
+        "list_scc_projects": "📌 Listing SCC projects",
+        "create_webhook": "🔔 Creating webhook",
+        "list_webhooks": "🔔 Listing webhooks",
+        "send_row_email": "📧 Sending email",
+        "request_row_update": "📧 Requesting update",
+    }
+    return display.get(tool_name, f"⚙️ {tool_name.replace('_', ' ').title()}")
