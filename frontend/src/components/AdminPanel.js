@@ -20,6 +20,17 @@ const S = {
   btn: (color, sm) => ({ padding: sm?'5px 12px':'9px 18px', borderRadius:8, border:'none', cursor:'pointer', fontSize: sm?11:13, fontWeight:700, background:color, color:'#fff' }),
 };
 
+// Field must be defined OUTSIDE AdminPanel — if defined inside, React treats it as a
+// new component type on every render, unmounting/remounting the input and losing focus.
+function Field({ label, children }) {
+  return (
+    <div style={{ marginBottom:14 }}>
+      <label style={S.label}>{label}</label>
+      {children}
+    </div>
+  );
+}
+
 export default function AdminPanel({ token, onClose }) {
   const [tab, setTab]           = useState('users');
   const [users, setUsers]       = useState([]);
@@ -27,9 +38,8 @@ export default function AdminPanel({ token, onClose }) {
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState('');
   const [success, setSuccess]   = useState('');
-  const [editUser, setEditUser] = useState(null); // user being edited
+  const [editUser, setEditUser] = useState(null);
 
-  // Add user form
   const [form, setForm] = useState({ name:'', email:'', password:'', smartsheet_token:'', is_admin:false });
 
   const loadUsers = useCallback(async () => {
@@ -73,7 +83,6 @@ export default function AdminPanel({ token, onClose }) {
     const updates = { name: editUser.name, is_active: editUser.is_active, is_admin: editUser.is_admin };
     if (editUser.smartsheet_token) updates.smartsheet_token = editUser.smartsheet_token;
     if (editUser.new_password && editUser.new_password.length >= 8) {
-      // Reset password
       await api(`/users/${editUser.id}/reset-password`, 'POST', { password: editUser.new_password }, token);
     }
     const res = await api(`/users/${editUser.id}`, 'PATCH', updates, token);
@@ -93,13 +102,6 @@ export default function AdminPanel({ token, onClose }) {
     await api(`/users/${user.id}`, 'DELETE', null, token);
     loadUsers();
   };
-
-  const Field = ({ label, children }) => (
-    <div style={{ marginBottom:14 }}>
-      <label style={S.label}>{label}</label>
-      {children}
-    </div>
-  );
 
   return (
     <div style={S.overlay} onClick={e => e.target === e.currentTarget && onClose()}>

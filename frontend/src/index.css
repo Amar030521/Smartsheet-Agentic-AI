@@ -581,6 +581,58 @@ body {
   30% { transform: translateY(-4px); opacity: 1; }
 }
 
+/* ── AGENT LIVE STATUS ──────────────────────────────────── */
+.agent-status {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 260px;
+  max-width: 340px;
+}
+
+.agent-status-content {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+}
+
+.agent-status-text {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-weight: 500;
+  min-height: 20px;
+}
+
+.agent-status-icon {
+  font-size: 15px;
+  line-height: 1;
+}
+
+.agent-progress-bar {
+  width: 100%;
+  height: 4px;
+  background: var(--border-subtle);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.agent-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), #f5a623);
+  border-radius: 4px;
+  min-width: 4px;
+}
+
+.agent-progress-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  letter-spacing: 0.03em;
+}
+
 /* ── SUGGESTED PROMPTS ──────────────────────────────────── */
 .suggestions {
   padding: 0 24px 16px;

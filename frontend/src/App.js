@@ -57,9 +57,8 @@ function WorkspaceNode({ node, depth, expanded, setExpanded, onSend, loadWorkspa
   const isOpen = expanded[key];
   const [loadingChildren, setLoadingChildren] = React.useState(false);
 
-  // A workspace has children if it has folders/sheets OR hasn't been loaded yet
   const hasChildren = node.type === 'workspace'
-    ? true  // always show arrow — load on first expand
+    ? true
     : (node.folders?.length > 0) || (node.subfolders?.length > 0) ||
       (node.sheets?.length > 0) || (node.dashboards?.length > 0) ||
       (node.reports?.length > 0);
@@ -72,7 +71,6 @@ function WorkspaceNode({ node, depth, expanded, setExpanded, onSend, loadWorkspa
   const handleExpand = async () => {
     const newOpen = !isOpen;
     setExpanded(prev => ({ ...prev, [key]: newOpen }));
-    // Lazy load workspace children on first expand
     if (newOpen && node.type === 'workspace' && !node.loaded && loadWorkspaceTree) {
       setLoadingChildren(true);
       await loadWorkspaceTree(node.id);
@@ -119,28 +117,91 @@ function WorkspaceNode({ node, depth, expanded, setExpanded, onSend, loadWorkspa
 
       {isOpen && hasChildren && (
         <div className="tree-children">
-          {/* Folders / subfolders */}
           {(node.folders || node.subfolders || []).map(f => (
             <WorkspaceNode key={f.id} node={f} depth={depth + 1}
               expanded={expanded} setExpanded={setExpanded} onSend={onSend} loadWorkspaceTree={loadWorkspaceTree} />
           ))}
-          {/* Sheets */}
           {(node.sheets || []).map(s => (
             <WorkspaceNode key={s.id} node={s} depth={depth + 1}
               expanded={expanded} setExpanded={setExpanded} onSend={onSend} loadWorkspaceTree={loadWorkspaceTree} />
           ))}
-          {/* Dashboards */}
           {(node.dashboards || []).map(d => (
             <WorkspaceNode key={d.id} node={{ ...d, type: 'dashboard' }} depth={depth + 1}
               expanded={expanded} setExpanded={setExpanded} onSend={onSend} loadWorkspaceTree={loadWorkspaceTree} />
           ))}
-          {/* Reports */}
           {(node.reports || []).map(r => (
             <WorkspaceNode key={r.id} node={{ ...r, type: 'report' }} depth={depth + 1}
               expanded={expanded} setExpanded={setExpanded} onSend={onSend} loadWorkspaceTree={loadWorkspaceTree} />
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// ── LIVE AGENT STATUS INDICATOR ─────────────────────────────────
+const AGENT_PHASES = [
+  { icon: '🔍', text: 'Connecting to Smartsheet...',        duration: 2200 },
+  { icon: '📂', text: 'Locating your workspace...',         duration: 2500 },
+  { icon: '📊', text: 'Fetching sheet data...',             duration: 3000 },
+  { icon: '🧮', text: 'Analysing rows & columns...',        duration: 3000 },
+  { icon: '🤖', text: 'Running AI analysis...',             duration: 3500 },
+  { icon: '📈', text: 'Computing metrics & patterns...',    duration: 3000 },
+  { icon: '🎯', text: 'Identifying key findings...',        duration: 3000 },
+  { icon: '✍️',  text: 'Preparing your response...',        duration: 99999 },
+];
+
+function AgentStatusIndicator() {
+  const [phaseIdx, setPhaseIdx] = React.useState(0);
+  const [visible, setVisible]  = React.useState(true);
+
+  React.useEffect(() => {
+    setPhaseIdx(0);
+    setVisible(true);
+  }, []);
+
+  React.useEffect(() => {
+    const phase = AGENT_PHASES[phaseIdx];
+    if (!phase || phaseIdx >= AGENT_PHASES.length - 1) return;
+    const advanceTimer = setTimeout(() => {
+      setVisible(false);
+      setTimeout(() => {
+        setPhaseIdx(i => Math.min(i + 1, AGENT_PHASES.length - 1));
+        setVisible(true);
+      }, 250);
+    }, phase.duration);
+    return () => clearTimeout(advanceTimer);
+  }, [phaseIdx]);
+
+  const phase = AGENT_PHASES[phaseIdx];
+  const pct   = Math.round(((phaseIdx) / (AGENT_PHASES.length - 1)) * 100);
+
+  return (
+    <div className="msg-group">
+      <div className="msg-avatar ai">AI</div>
+      <div className="msg-body">
+        <div className="thinking agent-status">
+          <div className="thinking-dots">
+            <span /><span /><span />
+          </div>
+          <div className="agent-status-content">
+            <div
+              className="agent-status-text"
+              style={{ opacity: visible ? 1 : 0, transition: 'opacity 0.25s ease' }}
+            >
+              <span className="agent-status-icon">{phase.icon}</span>
+              {phase.text}
+            </div>
+            <div className="agent-progress-bar">
+              <div
+                className="agent-progress-fill"
+                style={{ width: `${pct}%`, transition: 'width 0.6s ease' }}
+              />
+            </div>
+            <div className="agent-progress-label">{pct}% complete</div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -189,24 +250,20 @@ export default function App() {
   const inputRef = useRef(null);
   const textareaRef = useRef(null);
 
-  // Persist session
   useEffect(() => {
     localStorage.setItem(SESSION_KEY, sessionId);
   }, [sessionId]);
 
-  // Health check on mount
   useEffect(() => {
     getHealth()
       .then(h => setHealthStatus(h.smartsheet_connected ? 'connected' : 'degraded'))
       .catch(() => setHealthStatus('error'));
   }, []);
 
-  // Auto-scroll
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isLoading]);
 
-  // Auto-resize textarea
   useEffect(() => {
     const ta = textareaRef.current;
     if (ta) {
@@ -215,12 +272,10 @@ export default function App() {
     }
   }, [input]);
 
-  // Voice
   const { isRecording, isSupported: voiceSupported, startRecording, stopRecording } = useVoiceInput({
     onResult: (text) => {
       setInput(text);
       setIsListening(false);
-      // Auto-send voice input
       setTimeout(() => doSend(text, true), 300);
     },
     onError: (err) => {
@@ -237,7 +292,6 @@ export default function App() {
     setIsLoading(true);
     setPendingConfirmation(null);
 
-    // Add user message immediately
     const userMsg = {
       id: uuidv4(), role: 'user', content: userText,
       tool_calls: [], chart_data: null, needs_confirmation: false
@@ -275,7 +329,6 @@ export default function App() {
     } finally {
       setIsLoading(false);
       inputRef.current?.focus();
-      // Refresh session list to show/update current session
       reloadSessions();
     }
   }, [input, isLoading, sessionId]);
@@ -302,10 +355,8 @@ export default function App() {
   };
 
   const loadHistorySession = useCallback(async (session) => {
-    // Load a past session's messages into the chat
     const msgs = await loadMessages(session.id);
     if (!msgs.length) {
-      // Session exists but messages couldn't load — show error state
       setMessages([{
         id: uuidv4(), role: 'assistant',
         content: '⚠️ Could not load messages for this session. The session may be empty or there was a connection issue.',
@@ -325,7 +376,6 @@ export default function App() {
       needs_confirmation: false,
     }));
     setMessages(formatted);
-    // Store session id in localStorage so the session continues correctly
     localStorage.setItem(SESSION_KEY, session.id);
   }, [loadMessages]);
 
@@ -352,7 +402,6 @@ export default function App() {
     error: 'Connection Error'
   }[healthStatus] || 'Unknown';
 
-  // Auth gate — show login if not authenticated
   if (authLoading) return (
     <div style={{ minHeight:'100vh', display:'flex', alignItems:'center', justifyContent:'center', background:'#fff7f0' }}>
       <div style={{ fontSize:14, color:'#b07a55' }}>Loading...</div>
@@ -405,7 +454,7 @@ export default function App() {
       </header>
 
       <div className="main">
-        {/* SIDEBAR — Expandable Workspace Tree */}
+        {/* SIDEBAR */}
         {sidebarOpen && (
           <aside className="sidebar" style={{ width: sidebarWidth, minWidth: sidebarWidth, position: 'relative' }}>
             {sidebarLoading ? (
@@ -420,7 +469,7 @@ export default function App() {
               </div>
             ) : (
               <>
-                {/* WORKSPACES TREE — collapseable */}
+                {/* WORKSPACES TREE */}
                 <div className="sidebar-section">
                   <div className="sidebar-label"
                     style={{ display:'flex', justifyContent:'space-between', alignItems:'center', cursor:'pointer', userSelect:'none' }}
@@ -452,7 +501,6 @@ export default function App() {
                   )}
                 </div>
 
-                {/* DYNAMIC SECTIONS (actions from hook — recent sheets/dashboards removed, shown in sidebar sections) */}
                 {/* CHAT HISTORY */}
                 {chatSessions.length > 0 && (
                   <>
@@ -557,13 +605,10 @@ export default function App() {
                   <div className="msg-avatar ai">AI</div>
                 )}
                 <div className="msg-body">
-                  {/* Tool strip */}
                   {msg.tool_calls?.length > 0 && (
                     <ToolStrip tools={msg.tool_calls} />
                   )}
-                  {/* Bubble */}
                   <MessageBubble role={msg.role} content={msg.content} />
-                  {/* Followup suggestion buttons */}
                   {msg.followups?.length > 0 && (
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8, maxWidth: 520 }}>
                       {msg.followups.map((fu, i) => (
@@ -589,18 +634,15 @@ export default function App() {
                       ))}
                     </div>
                   )}
-                  {/* Infographics */}
                   {msg.infographics?.length > 0 && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
                       {msg.infographics.map((ig, i) => <InfographicCard key={i} data={ig} />)}
                     </div>
                   )}
-                  {/* Inline form */}
                   {msg.input_form && (
                     <FormCard
                       form={msg.input_form}
                       onSubmit={async (form, values) => {
-                        // Build prompt from form submission
                         const entries = Object.entries(values).filter(([k,v]) => v !== '' && v !== false && v !== null && v !== undefined);
                         const summary = entries.map(([k,v]) => `${k}: ${v}`).join(', ');
                         const prompt = form.type === 'new_row'
@@ -617,11 +659,8 @@ export default function App() {
                       }}
                     />
                   )}
-                  {/* Dashboard (rich multi-panel) */}
                   {msg.dashboard_data && <DashboardCard data={msg.dashboard_data} />}
-                  {/* Chart (simple single metric) */}
                   {msg.chart_data && !msg.dashboard_data && <ChartCard data={msg.chart_data} />}
-                  {/* Confirm */}
                   {msg.needs_confirmation && pendingConfirmation?.msgId === msg.id && (
                     <ConfirmCard
                       message="This will make changes to your Smartsheet workspace."
@@ -629,7 +668,6 @@ export default function App() {
                       onCancel={handleCancel}
                     />
                   )}
-                  {/* Processing time */}
                   {msg.processing_time_ms && msg.role === 'assistant' && (
                     <div style={{ fontSize: 10, color: 'var(--text-muted)', paddingLeft: 4 }}>
                       {(msg.processing_time_ms / 1000).toFixed(1)}s
@@ -642,24 +680,11 @@ export default function App() {
               </div>
             ))}
 
-            {/* Thinking indicator */}
-            {isLoading && (
-              <div className="msg-group">
-                <div className="msg-avatar ai">AI</div>
-                <div className="msg-body">
-                  <div className="thinking">
-                    <div className="thinking-dots">
-                      <span /><span /><span />
-                    </div>
-                    Querying Smartsheet...
-                  </div>
-                </div>
-              </div>
-            )}
+            {/* Live status indicator */}
+            {isLoading && <AgentStatusIndicator />}
             <div ref={bottomRef} />
           </div>
 
-          {/* Quick prompts — only on welcome */}
           {messages.length === 1 && (
             <div className="suggestions">
               <div className="suggestions-label">Quick start</div>
