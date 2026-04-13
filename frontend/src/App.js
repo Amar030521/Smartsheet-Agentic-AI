@@ -307,9 +307,19 @@ export default function App() {
         setPendingConfirmation({ msgId: aiMsg.id, text: userText });
       }
     } catch (err) {
+      // Show clean message for known transient errors
+      const msg = err.message || '';
+      const isOverloaded = msg.includes('529') || msg.includes('overloaded') || msg.includes('Overloaded');
+      const isTimeout = msg.includes('timeout') || msg.includes('504') || msg.includes('503');
+      const displayMsg = isOverloaded
+        ? '⚠️ **Anthropic servers are temporarily overloaded.** Please wait 10–15 seconds and try again.'
+        : isTimeout
+        ? '⚠️ **Request timed out.** The query may be too complex — please try a more specific question.'
+        : `⚠️ **Error:** ${msg}\n\nPlease check your connection and try again.`;
+
       setMessages(prev => [...prev, {
         id: uuidv4(), role: 'assistant',
-        content: `⚠️ **Error:** ${err.message}\n\nPlease check your connection and try again.`,
+        content: displayMsg,
         tool_calls: [], chart_data: null, needs_confirmation: false
       }]);
     } finally {
