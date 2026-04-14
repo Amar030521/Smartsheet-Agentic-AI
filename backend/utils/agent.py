@@ -252,9 +252,16 @@ AUTOMATION API LIMITATION:
 
 DISPLAY RULES — clean output only:
 - NEVER display sheet IDs, row IDs, workspace IDs, or any numeric Smartsheet IDs
-- NEVER display raw email addresses — use role name instead: "PM", "Project Lead", "VP"
+- NEVER display raw email addresses — show the person's name instead, never the email string
 - Use names only: "Budget Tracking", "BP Folder", "Professional Certificate Workspace"
 - IDs and emails are for internal tool use only — invisible to the user
+
+CONTACT ACCURACY RULES — CRITICAL, NEVER VIOLATE:
+- NEVER guess, infer, or assume a person's name or role from context
+- ONLY report a person as PM/Lead/Owner if that specific field in the sheet EXPLICITLY contains their name
+- If the Project Manager field is empty or unclear — say "Project Manager not assigned" — NEVER substitute another name found elsewhere in the sheet
+- A person appearing in task rows, assignee columns, or other sheets does NOT make them the PM of this project
+- If you need someone's email for an action and it is not in the current sheet — ask the user: "I don't have [Name]'s email in this sheet. Could you provide it?" — NEVER pull email from another sheet or workspace
 
 ═══════════════════════════════════════
 INFOGRAPHICS — INLINE VISUAL BLOCKS
@@ -342,7 +349,6 @@ def _call_claude_with_retry(client, model, max_tokens, system, tools, messages, 
             time.sleep(wait_time)
         except anthropic.APIStatusError as e:
             error_str = str(e).lower()
-            # Retry on rate limit (429) and overloaded (529)
             is_retryable = (
                 "rate_limit" in error_str or
                 "overloaded" in error_str or
@@ -434,9 +440,9 @@ When user says "today", "tomorrow", "yesterday", "this week", "next week" — us
                     break
         messages = trimmed[start:]
 
-    _DATA_TOOLS = {"get_sheet_summary","filter_rows","aggregate_column",
-                   "get_project_status_summary","get_sheet","get_sheet_by_name",
-                   "get_sheet_with_links","find_contact_in_sheet"}
+    _DATA_TOOLS = {"get_sheet_summary", "filter_rows", "aggregate_column",
+                   "get_project_status_summary", "get_sheet", "get_sheet_by_name",
+                   "get_sheet_with_links", "find_contact_in_sheet"}
 
     for msg in messages:
         if msg.get("role") == "user" and isinstance(msg.get("content"), list):
@@ -529,7 +535,7 @@ When user says "today", "tomorrow", "yesterday", "this week", "next week" — us
                 if msg.get("role") == "assistant":
                     content_blocks = msg.get("content", [])
                     if isinstance(content_blocks, list):
-                        texts = [b.get("text","") for b in content_blocks if isinstance(b,dict) and b.get("type")=="text"]
+                        texts = [b.get("text", "") for b in content_blocks if isinstance(b, dict) and b.get("type") == "text"]
                         if texts:
                             final_text = "\n".join(t for t in texts if t)
                             break
@@ -576,15 +582,16 @@ When user says "today", "tomorrow", "yesterday", "this week", "next week" — us
                 try: final_text = final_text[:final_text.index("DASHBOARD::")].strip()
                 except Exception: pass
 
-        # Scrub IDs and emails
+        # Scrub IDs and emails — strip email addresses but KEEP person names intact
         final_text = re.sub(r'\b\d{10,}\b', '[ID]', final_text)
         final_text = re.sub(r'\(?\s*(?:sheet[_\s]?id|workspace[_\s]?id|folder[_\s]?id|row[_\s]?id|id)\s*[:\-]?\s*\[ID\]\s*\)?', '', final_text, flags=re.IGNORECASE)
         final_text = re.sub(r'^\s*\[ID\]\s*$', '', final_text, flags=re.MULTILINE)
-        final_text = re.sub(r'(?<=assigned to )\s*[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}', 'PM', final_text)
-        final_text = re.sub(r'(?<=Owner:\s)[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}', 'PM', final_text)
-        final_text = re.sub(r'(?<=PM\s)[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}', '', final_text)
-        final_text = re.sub(r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}', '[contact]', final_text)
+        # Remove emails in parentheses/brackets: "Name (email@x.com)" → "Name"
+        final_text = re.sub(r'\s*[\(\[]\s*[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\s*[\)\]]', '', final_text)
+        # Remove standalone email addresses — keep names intact
+        final_text = re.sub(r'\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b', '', final_text)
         final_text = re.sub(r'\(\s*\)', '', final_text)
+        final_text = re.sub(r',\s*,', ',', final_text)
         final_text = re.sub(r'\n{3,}', '\n\n', final_text).strip()
 
         # Parse INFOGRAPHIC::
@@ -705,9 +712,9 @@ When user says "today", "tomorrow", "yesterday", "this week", "next week" — us
                     break
         messages = trimmed[start:]
 
-    _DATA_TOOLS = {"get_sheet_summary","filter_rows","aggregate_column",
-                   "get_project_status_summary","get_sheet","get_sheet_by_name",
-                   "get_sheet_with_links","find_contact_in_sheet"}
+    _DATA_TOOLS = {"get_sheet_summary", "filter_rows", "aggregate_column",
+                   "get_project_status_summary", "get_sheet", "get_sheet_by_name",
+                   "get_sheet_with_links", "find_contact_in_sheet"}
 
     for msg in messages:
         if msg.get("role") == "user" and isinstance(msg.get("content"), list):
@@ -798,7 +805,7 @@ When user says "today", "tomorrow", "yesterday", "this week", "next week" — us
             if msg.get("role") == "assistant":
                 content_blocks = msg.get("content", [])
                 if isinstance(content_blocks, list):
-                    texts = [b.get("text","") for b in content_blocks if isinstance(b,dict) and b.get("type")=="text"]
+                    texts = [b.get("text", "") for b in content_blocks if isinstance(b, dict) and b.get("type") == "text"]
                     if texts:
                         final_text = "\n".join(t for t in texts if t)
                         break
@@ -852,7 +859,7 @@ When user says "today", "tomorrow", "yesterday", "this week", "next week" — us
             raw_json = final_text[obj_start:obj_end]
             dashboard_data = json.loads(raw_json)
             final_text = (final_text[:db_idx] + final_text[obj_end:]).strip()
-            logger.info("Dashboard parsed", panels=len(dashboard_data.get("panels",[])), kpis=len(dashboard_data.get("kpis",[])))
+            logger.info("Dashboard parsed", panels=len(dashboard_data.get("panels", [])), kpis=len(dashboard_data.get("kpis", [])))
         except Exception as e:
             logger.warning("Dashboard parse failed", error=str(e), snippet=final_text[final_text.find("DASHBOARD::"):][:100] if "DASHBOARD::" in final_text else "")
             try:
@@ -860,15 +867,16 @@ When user says "today", "tomorrow", "yesterday", "this week", "next week" — us
             except Exception:
                 pass
 
-    # Scrub IDs and emails
+    # Scrub raw IDs and emails — strip emails but KEEP person names intact
     final_text = re.sub(r'\b\d{10,}\b', '[ID]', final_text)
     final_text = re.sub(r'\(?\s*(?:sheet[_\s]?id|workspace[_\s]?id|folder[_\s]?id|row[_\s]?id|id)\s*[:\-]?\s*\[ID\]\s*\)?', '', final_text, flags=re.IGNORECASE)
     final_text = re.sub(r'^\s*\[ID\]\s*$', '', final_text, flags=re.MULTILINE)
-    final_text = re.sub(r'(?<=assigned to )\s*[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}', 'PM', final_text)
-    final_text = re.sub(r'(?<=Owner:\s)[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}', 'PM', final_text)
-    final_text = re.sub(r'(?<=PM\s)[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}', '', final_text)
-    final_text = re.sub(r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}', '[contact]', final_text)
+    # Remove emails in parentheses/brackets: "Name (email@x.com)" → "Name"
+    final_text = re.sub(r'\s*[\(\[]\s*[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\s*[\)\]]', '', final_text)
+    # Remove standalone email addresses — keep names intact
+    final_text = re.sub(r'\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b', '', final_text)
     final_text = re.sub(r'\(\s*\)', '', final_text)
+    final_text = re.sub(r',\s*,', ',', final_text)
     final_text = re.sub(r'\n{3,}', '\n\n', final_text).strip()
 
     # Parse INFOGRAPHIC::
@@ -916,7 +924,7 @@ When user says "today", "tomorrow", "yesterday", "this week", "next week" — us
                         break
             input_form = json.loads(final_text[obj_start:obj_end])
             final_text = (final_text[:fm_idx] + final_text[obj_end:]).strip()
-            logger.info("Form parsed", title=input_form.get("title",""), fields=len(input_form.get("fields",[])))
+            logger.info("Form parsed", title=input_form.get("title", ""), fields=len(input_form.get("fields", [])))
         except Exception as e:
             logger.warning("Form parse failed", error=str(e))
             try:
